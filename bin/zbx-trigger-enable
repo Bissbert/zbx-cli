@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+set -euo pipefail
+SD="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"; PATH="$SD:$PATH"
+. "$SD/log-lib"; . "$SD/zbx-lib"
+tid="${1:-}"; [ -z "$tid" ] && { echo "Usage: $(basename "$0") <triggerid>"; exit 2; }
+jq -n --arg tid "$tid" --argjson st 0 '{triggerid:($tid|tonumber), status:$st}' | zbx_call trigger.update | jq -r '"ok triggerid=" + (.result.triggerids[0])'

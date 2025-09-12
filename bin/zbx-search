@@ -1,0 +1,207 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SD="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"; PATH="$SD:$PATH"
+# shellcheck source=bin/log-lib
+. "$SD/log-lib"
+# shellcheck source=bin/zbx-lib
+. "$SD/zbx-lib"
+
+usage() {
+  cat <<'EOF'
+Usage:
+  zbx search <entity> <pattern> [options]
+
+Entities:
+  hosts         Search host "host" or "name" fields
+  hostgroups    Search host group names
+  templates     Search template names
+  items         Search item names or keys (optionally by host)
+  triggers      Search trigger descriptions (optionally by host)
+  problems      Search current problem names
+  macros        Search macros on a host (requires --host)
+
+Options:
+  --host HOST        Restrict to a specific host (items/triggers/macros)
+  --like             Use Zabbix API substring search (faster, simpler)
+  --regex            Use client-side regex (default; case-insensitive)
+  --key              For items: search by item key_ instead of name
+  --limit N          Limit number of API results (default: 500)
+  --json             Output raw JSON instead of TSV
+  -h, --help         This help
+
+Notes:
+- Default matching is client-side regex (case-insensitive) via jq `test()`.
+- `--like` switches to API-side substring search (.search = { field: "pattern" }).
+- TSV columns vary by entity; fields are chosen to be script-friendly.
+EOF
+}
+
+# -------- arg parsing --------
+[ $# -lt 1 ] && { usage; exit 2; }
+case "${1:-}" in
+  -h|--help) usage; exit 0 ;;
+esac
+
+entity="${1:-}"; shift || true
+[ $# -lt 1 ] && { log_error "Missing <pattern>"; usage; exit 2; }
+pattern="${1:-}"; shift || true
+
+HOST=""; LIKE=0; REGEX=1; KEYMODE=0; LIMIT=500; OUT_JSON=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --host) HOST="${2:-}"; shift ;;
+    --like) LIKE=1; REGEX=0 ;;
+    --regex) LIKE=0; REGEX=1 ;;
+    --key) KEYMODE=1 ;;
+    --limit) LIMIT="${2:-500}"; shift ;;
+    --json) OUT_JSON=1 ;;
+    -h|--help) usage; exit 0 ;;
+    *) log_error "Unknown option: $1"; usage; exit 2 ;;
+  esac
+  shift || true
+done
+
+# Helpers
+_ci_regex() { jq -r --arg re "$pattern" 'map(select((. // "") | test($re; "i")))' ; }
+
+limit_param() { jq -n --argjson limit "$LIMIT" '{limit:$limit}'; }
+
+# Resolve hostid if HOST provided
+HOSTID=""
+if [ -n "$HOST" ]; then
+  HOSTID="$(jq -n --arg host "$HOST" '{filter:{host:$host}, output:["hostid"]}' \
+    | zbx_call host.get | jq -r '.result[0].hostid // empty')"
+  [ -z "$HOSTID" ] && { log_error "Host not found: $HOST"; exit 1; }
+fi
+
+# -------- entity handlers --------
+case "$entity" in
+  hosts)
+    base='{"output":["hostid","host","name"],"sortfield":"name"}'
+    req="$(printf '%s' "$base" | jq '.')"
+
+    res="$(printf '%s' "$req" | zbx_call host.get)"
+    [ "$OUT_JSON" -eq 1 ] && { jq '.result' <<<"$res"; exit 0; }
+
+    rows="$(jq -c '.result' <<<"$res")"
+    if [ "$LIKE" -eq 1 ]; then
+      # API side LIKE needs another call; emulate by client filtering on both fields
+      jq -r --arg p "$pattern" '
+        .[] | select((.host // "") | contains($p) or (.name // "") | contains($p))
+        | [ .hostid, .host, .name ] | @tsv
+      ' <<<"$rows"
+    else
+      jq -r --arg re "$pattern" '
+        .[] | select( ((.host // "") | test($re; "i")) or ((.name // "") | test($re; "i")) )
+        | [ .hostid, .host, .name ] | @tsv
+      ' <<<"$rows"
+    fi
+  ;;
+
+  hostgroups)
+    req='{"output":["groupid","name"],"sortfield":"name"}'
+    res="$(printf '%s' "$req" | zbx_call hostgroup.get)"
+    [ "$OUT_JSON" -eq 1 ] && { jq '.result' <<<"$res"; exit 0; }
+    if [ "$LIKE" -eq 1 ]; then
+      jq -r --arg p "$pattern" '.result[] | select((.name // "") | contains($p)) | [.groupid,.name]|@tsv' <<<"$res"
+    else
+      jq -r --arg re "$pattern" '.result[] | select((.name // "") | test($re; "i")) | [.groupid,.name]|@tsv' <<<"$res"
+    fi
+  ;;
+
+  templates)
+    req='{"output":["templateid","name"],"sortfield":"name"}'
+    res="$(printf '%s' "$req" | zbx_call template.get)"
+    [ "$OUT_JSON" -eq 1 ] && { jq '.result' <<<"$res"; exit 0; }
+    if [ "$LIKE" -eq 1 ]; then
+      jq -r --arg p "$pattern" '.result[] | select((.name // "") | contains($p)) | [.templateid,.name]|@tsv' <<<"$res"
+    else
+      jq -r --arg re "$pattern" '.result[] | select((.name // "") | test($re; "i")) | [.templateid,.name]|@tsv' <<<"$res"
+    fi
+  ;;
+
+  items)
+    field="name"; [ "$KEYMODE" -eq 1 ] && field="key_"
+    base='{"output":["itemid","name","key_","hostid","value_type"],"sortfield":"name"}'
+    req="$(printf '%s' "$base" | jq '.')"
+    if [ -n "$HOSTID" ]; then
+      req="$(jq --arg hid "$HOSTID" '.hostids = [$hid]' <<<"$req")"
+    fi
+    # Apply API-side LIKE if requested
+    if [ "$LIKE" -eq 1 ]; then
+      req="$(jq --arg f "$field" --arg p "$pattern" '.search = {($f): $p}' <<<"$req")"
+    fi
+    req="$(jq --argjson limit "$LIMIT" '.limit = $limit' <<<"$req")"
+
+    res="$(printf '%s' "$req" | zbx_call item.get)"
+    [ "$OUT_JSON" -eq 1 ] && { jq '.result' <<<"$res"; exit 0; }
+
+    rows="$(jq -c '.result' <<<"$res")"
+    if [ "$LIKE" -eq 1 ]; then
+      jq -r '[.[] | [ .itemid, .hostid, .key_, .name ]] | .[] | @tsv' <<<"$rows"
+    else
+      jq -r --arg re "$pattern" --arg field "$field" '
+        .[]
+        | select( (.[ $field ] // "") | test($re; "i") )
+        | [ .itemid, .hostid, .key_, .name ] | @tsv
+      ' <<<"$rows"
+    fi
+  ;;
+
+  triggers)
+    base='{"output":["triggerid","description","priority","status","hostid"],"sortfield":"description"}'
+    req="$(printf '%s' "$base" | jq '.')"
+    if [ -n "$HOSTID" ]; then
+      req="$(jq --arg hid "$HOSTID" '.hostids = [$hid]' <<<"$req")"
+    fi
+    if [ "$LIKE" -eq 1 ]; then
+      req="$(jq --arg p "$pattern" '.search = {description: $p}' <<<"$req")"
+    fi
+    req="$(jq --argjson limit "$LIMIT" '.limit = $limit' <<<"$req")"
+
+    res="$(printf '%s' "$req" | zbx_call trigger.get)"
+    [ "$OUT_JSON" -eq 1 ] && { jq '.result' <<<"$res"; exit 0; }
+
+    rows="$(jq -c '.result' <<<"$res")"
+    if [ "$LIKE" -eq 1 ]; then
+      jq -r '[.[] | [ .triggerid, .hostid, .priority, .status, .description ]] | .[] | @tsv' <<<"$rows"
+    else
+      jq -r --arg re "$pattern" '
+        .[]
+        | select((.description // "") | test($re; "i"))
+        | [ .triggerid, .hostid, .priority, .status, .description ] | @tsv
+      ' <<<"$rows"
+    fi
+  ;;
+
+  problems)
+    # Only current/recent problems
+    req='{"recent":"true","sortfield":"eventid","sortorder":"DESC","output":"extend"}'
+    res="$(printf '%s' "$req" | zbx_call problem.get)"
+    [ "$OUT_JSON" -eq 1 ] && { jq '.result' <<<"$res"; exit 0; }
+    if [ "$LIKE" -eq 1 ]; then
+      jq -r --arg p "$pattern" '.result[] | select((.name // "") | contains($p)) | [.eventid,.name,.severity,.clock]|@tsv' <<<"$res"
+    else
+      jq -r --arg re "$pattern" '.result[] | select((.name // "") | test($re; "i")) | [.eventid,.name,.severity,.clock]|@tsv' <<<"$res"
+    fi
+  ;;
+
+  macros)
+    [ -n "$HOSTID" ] || { log_error "macros search requires --host"; exit 2; }
+    req="$(jq -n --arg hid "$HOSTID" '{hostids:[$hid]}' )"
+    res="$(printf '%s' "$req" | zbx_call usermacro.get)"
+    [ "$OUT_JSON" -eq 1 ] && { jq '.result' <<<"$res"; exit 0; }
+    if [ "$LIKE" -eq 1 ]; then
+      jq -r --arg p "$pattern" '.result[] | select((.macro // "") | contains($p) or (.value // "") | contains($p)) | [.macro,.value]|@tsv' <<<"$res"
+    else
+      jq -r --arg re "$pattern" '.result[] | select((.macro // "") | test($re; "i") or (.value // "") | test($re; "i")) | [.macro,.value]|@tsv' <<<"$res"
+    fi
+  ;;
+
+  *)
+    log_error "Unknown entity: $entity"
+    usage
+    exit 2
+  ;;
+esac

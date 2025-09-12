@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+set -euo pipefail
+SD="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"; PATH="$SD:$PATH"
+. "$SD/log-lib"; . "$SD/zbx-lib"
+id="${1:-}"; msg="${2:-Acknowledged via zbx}"
+[ -z "$id" ] && { echo "Usage: $(basename "$0") <eventid|problemid> [message]"; exit 2; }
+jq -n --arg id "$id" --arg msg "$msg" '{eventids:[$id|tonumber], action:6, message:$msg}' | zbx_call event.acknowledge | jq '.result'

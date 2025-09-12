@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+PATH="$SCRIPT_DIR:$PATH"
+. "$SCRIPT_DIR/log-lib"
+. "$SCRIPT_DIR/zbx-lib"
+
+usage() {
+  cat <<EOF
+Usage: $(basename "$0") <method> [jq-filter]
+Reads JSON params on stdin (or uses {}), calls Zabbix <method>, prints response.
+If a jq filter is provided, it applies to .result
+EOF
+}
+
+[ "${1:-}" = "-h" ] && { usage; exit 0; }
+method="${1:-}"
+[ -z "$method" ] && { log_error "Missing method"; usage; exit 2; }
+jqfilter="${2:-}"
+
+params="$(cat - || true)"
+[ -z "${params:-}" ] && params='{}'
+
+out="$(printf '%s' "$params" | zbx_call "$method")"
+if jq -e '.error?' >/dev/null 2>&1 <<<"$out"; then
+  log_error "Zabbix API error: $(jq -c '.error' <<<"$out")"
+  printf '%s\n' "$out"
+  exit 1
+fi
+
+if [ -n "$jqfilter" ]; then
+  jq -r --argfile R <(jq '.result' <<<"$out") '$R | '"$jqfilter"
+else
+  jq '.' <<<"$out"
+fi

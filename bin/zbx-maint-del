@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+set -euo pipefail
+SD="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"; PATH="$SD:$PATH"
+. "$SD/log-lib"; . "$SD/zbx-lib"
+mid="${1:-}"; [ -z "$mid" ] && { echo "Usage: $(basename "$0") <maintenanceid>"; exit 2; }
+jq -n --arg mid "$mid" '{maintenanceids:[$mid|tonumber]}' | zbx_call maintenance.delete | jq '.result'

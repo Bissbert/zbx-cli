@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -euo pipefail
+SD="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"; PATH="$SD:$PATH"
+. "$SD/log-lib"; . "$SD/zbx-lib"
+host="${1:-}"; macro="${2:-}"
+[ -z "$host" ] || [ -z "$macro" ] && { echo "Usage: $(basename "$0") <host> <{MACRO}>"; exit 2; }
+hid="$(jq -n --arg host "$host" '{filter:{host:$host}, output:["hostid"]}' | zbx_call host.get | jq -r '.result[0].hostid // empty')"
+[ -z "$hid" ] && { log_error "Host not found: $host"; exit 1; }
+mid="$(jq -n --arg hid "$hid" --arg macro "$macro" '{hostids:[$hid], filter:{macro:$macro}, output:["hostmacroid"]}' | zbx_call usermacro.get | jq -r '.result[0].hostmacroid // empty')"
+[ -z "$mid" ] && { log_error "Macro not found on host: $macro"; exit 1; }
+jq -n --arg mid "$mid" '{hostmacroids:[$mid]}' | zbx_call usermacro.delete | jq '.result'

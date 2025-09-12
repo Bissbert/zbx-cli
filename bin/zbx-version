@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+set -euo pipefail
+SD="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"; PATH="$SD:$PATH"
+. "$SD/log-lib"; . "$SD/zbx-lib"
+jq -n '{}' | zbx_call apiinfo.version | jq -r '.result' | sed 's/^/api.version: /'
+jq -n '{}' | zbx_call user.get | jq -r '.result[0] | "user: \(.alias) (\(.name) \(.surname))"' || true

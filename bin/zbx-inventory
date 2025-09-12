@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+set -euo pipefail
+SD="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"; PATH="$SD:$PATH"
+. "$SD/log-lib"; . "$SD/zbx-lib"
+jq -n '{output:["hostid","host","name","status"], selectInventory:"extend"}' | zbx_call host.get | jq -r '
+  ["hostid","host","name","status","asset_tag","hardware","location","site_address_a","site_city","site_country"] as $h |
+  ( $h | @csv ),
+  ( .result[] | [
+      .hostid, .host, .name, .status,
+      .inventory.asset_tag, .inventory.hardware,
+      .inventory.location, .inventory.site_address_a,
+      .inventory.site_city, .inventory.site_country
+    ] | @csv )'

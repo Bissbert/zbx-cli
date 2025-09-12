@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+set -euo pipefail
+SD="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"; PATH="$SD:$PATH"
+. "$SD/log-lib"; . "$SD/zbx-lib"
+itemid="${1:-}"; since="${2:-}"; until="${3:-}"
+[ -z "$itemid" ] || [ -z "$since" ] || [ -z "$until" ] && { echo "Usage: $(basename "$0") <itemid> <since-epoch> <until-epoch>"; exit 2; }
+jq -n --arg itemid "$itemid" --arg since "$since" --arg until "$until" '{output:["clock","num","min","avg","max"], itemids:[$itemid|tonumber], time_from:($since|tonumber), time_till:($until|tonumber), sortfield:"clock", sortorder:"ASC"}' | zbx_call trend.get | jq -r '.result[] | [.clock,.num,.min,.avg,.max]|@tsv'

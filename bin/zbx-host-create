@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+SD="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"; PATH="$SD:$PATH"
+. "$SD/log-lib"; . "$SD/zbx-lib"
+host="${1:-}"; ip="${2:-}"; group="${3:-Linux servers}"
+[ -z "$host" ] || [ -z "$ip" ] && { echo "Usage: $(basename "$0") <host> <ip> [group-name]"; exit 2; }
+gid="$(jq -n --arg name "$group" '{filter:{name:$name}, output:["groupid"]}' | zbx_call hostgroup.get | jq -r '.result[0].groupid // empty')"
+if [ -z "$gid" ]; then
+  gid="$(jq -n --arg name "$group" '{name:$name}' | zbx_call hostgroup.create | jq -r '.result.groupids[0]')"
+fi
+jq -n --arg host "$host" --arg ip "$ip" --arg gid "$gid" '
+{host:$host, interfaces:[{type:1, main:1, useip:1, ip:$ip, dns:"", port:"10050"}], groups:[{groupid:$gid}]}' | zbx_call host.create | jq '.result'

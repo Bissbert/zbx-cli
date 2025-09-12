@@ -1,0 +1,116 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+PATH="$SCRIPT_DIR:$PATH"
+
+# ---- Config discovery -------------------------------------------------------
+_zbx_find_config() {
+  local try
+  # 1) explicit
+  if [ -n "${ZBX_CONFIG:-}" ] && [ -f "$ZBX_CONFIG" ]; then
+    printf '%s\n' "$ZBX_CONFIG"; return 0
+  fi
+  # 2) repo-local (when running from the project tree)
+  try="$SCRIPT_DIR/../config.sh"; [ -f "$try" ] && { printf '%s\n' "$try"; return 0; }
+  # 3) current working directory
+  try="$PWD/config.sh";           [ -f "$try" ] && { printf '%s\n' "$try"; return 0; }
+  # 4) user config (XDG)
+  try="${XDG_CONFIG_HOME:-$HOME/.config}/zbx/config.sh"
+  [ -f "$try" ] && { printf '%s\n' "$try"; return 0; }
+  # 5) system config
+  try="/etc/zbx/config.sh";       [ -f "$try" ] && { printf '%s\n' "$try"; return 0; }
+  # none found
+  return 1
+}
+
+if _cfg="$(_zbx_find_config)"; then
+  # shellcheck source=/dev/null
+  . "$_cfg"
+  export ZBX_CONFIG_ACTIVE="$_cfg"
+else
+  # no config is fine; defaults below will still apply
+  export ZBX_CONFIG_ACTIVE=""
+fi
+
+# ---- Defaults (only if not set by env/config) -------------------------------
+: "${ZABBIX_URL:=https://zabbix.example.com/api_jsonrpc.php}"
+: "${ZABBIX_USER:=apiuser}"
+: "${ZABBIX_PASS:=apipassword}"
+: "${ZABBIX_API_TOKEN:=}"
+: "${ZABBIX_VERIFY_TLS:=1}"
+: "${ZABBIX_TOKEN_FILE:=.zabbix_session.token}"
+: "${ZABBIX_CURL_TIMEOUT:=25}"
+
+# ---- Minimal logger fallbacks (overridden if log-lib is sourced first) ------
+log_error(){ echo "[ERROR] $*" >&2; }
+log_warn(){  echo "[WARN ] $*" >&2; }
+log_info(){  echo "[INFO ] $*" >&2; }
+log_debug(){ [ "${LOG_LEVEL:-}" = "debug" ] && echo "[DEBUG] $*" >&2; }
+
+# ---- HTTP and auth helpers (unchanged from your version) --------------------
+_zbx_curl_common() {
+  local verify_opt=()
+  [ "${ZABBIX_VERIFY_TLS:-1}" -eq 0 ] && verify_opt=(--insecure)
+  curl -sS "${verify_opt[@]}" \
+       --connect-timeout "${ZABBIX_CURL_TIMEOUT}" \
+       --max-time "${ZABBIX_CURL_TIMEOUT}" \
+       -H 'Content-Type: application/json' \
+       "$@"
+}
+
+_zbx_read_session_token() { [ -f "$ZABBIX_TOKEN_FILE" ] && cat "$ZABBIX_TOKEN_FILE" || true; }
+_zbx_write_session_token() { umask 077; printf '%s' "$1" > "$ZABBIX_TOKEN_FILE".tmp; mv "$ZABBIX_TOKEN_FILE".tmp "$ZABBIX_TOKEN_FILE"; }
+
+zbx_login() {
+  if [ -n "${ZABBIX_API_TOKEN:-}" ]; then
+    log_debug "Bearer token set; skipping user.login"
+    return 0
+  fi
+  log_info "Logging into Zabbix as ${ZABBIX_USER}"
+  local req resp tok
+  req=$(jq -n --arg user "$ZABBIX_USER" --arg pass "$ZABBIX_PASS" \
+        '{jsonrpc:"2.0", method:"user.login", id:1, params:{user:$user, password:$pass}}')
+  resp=$(_zbx_curl_common -X POST "$ZABBIX_URL" -d "$req")
+  tok=$(jq -r '.result // empty' <<<"$resp" || true)
+  [ -z "$tok" ] && { log_error "Zabbix login failed: $(jq -c '.error // {}' <<<"$resp")"; return 1; }
+  _zbx_write_session_token "$tok"
+  log_debug "Session token cached"
+}
+
+zbx_call_raw() {
+  local method="$1"
+  local params; params=$(cat || true); [ -z "${params:-}" ] && params='{}'
+
+  local headers=() auth_field="null"
+  if [ -n "${ZABBIX_API_TOKEN:-}" ]; then
+    headers=(-H "Authorization: Bearer ${ZABBIX_API_TOKEN}")
+  else
+    local tok; tok="$(_zbx_read_session_token)"
+    if [ -z "$tok" ]; then zbx_login; tok="$(_zbx_read_session_token)"; fi
+    auth_field=$(jq -R <<<"$tok")
+  fi
+
+  local req
+  req=$(jq -n --arg method "$method" --argjson params "$params" --argjson auth "$auth_field" '
+    {jsonrpc:"2.0", method:$method, id:1, params:$params}
+    | if $auth != null then .auth = $auth else . end
+  ')
+  _zbx_curl_common -X POST "${headers[@]}" "$ZABBIX_URL" -d "$req"
+}
+
+zbx_call() {
+  local method="$1" input resp
+  input="$(cat || true)"
+  resp=$(printf '%s' "$input" | zbx_call_raw "$method")
+  if [ -n "${ZABBIX_API_TOKEN:-}" ]; then printf '%s' "$resp"; return 0; fi
+  if jq -e '.error.message? | test("Session terminated|Not authorised"; "i")' >/dev/null 2>&1 <<<"$resp"; then
+    log_warn "Session terminated; re-login and retry once"
+    zbx_login
+    resp=$(printf '%s' "$input" | zbx_call_raw "$method")
+  fi
+  printf '%s' "$resp"
+}
+
+# Convenience: show where config came from
+zbx_config_path() { printf '%s\n' "${ZBX_CONFIG_ACTIVE:-}"; }

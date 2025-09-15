@@ -13,15 +13,15 @@ small scripts, composable, text streams in/out.
 * **`zbx config`** — safe management of your `config.sh` (read, set, unset, list, edit).
 * **`zbx doctor`** — environment, dependency, and config checks with suggested fixes.
 * Pluggable: just drop new `zbx-*` scripts into `$PATH`.
-* Outputs **TSV** or **JSON** → easy to pipe into `jq`, `awk`, `grep`, `cut`, etc.
-* **Bash + Zsh completions** included.
+* Outputs **TSV/CSV/JSON** → easy to pipe into `jq`, `awk`, `grep`, `cut`, etc.
+* **Bash completion** available (auto‑generated).
 
 ---
 
 ## Requirements
 
 * **bash**, **curl**, **jq**
-* Optional: **zsh** or **bash-completion** for shell completions
+* Optional: **bash-completion** for shell completions
 
 ---
 
@@ -156,7 +156,7 @@ API Token mode: when `ZABBIX_API_TOKEN` is provided in config or environment, it
 | `zbx inventory`                                                      | Export inventory (CSV)                                                        |
 | **Search**                                                           |                                                                               |
 | `zbx search <entity> <pattern> [opts]`                               | Search across `hosts`, `templates`, `items`, `triggers`, `problems`, `macros` |
-| Options: `--host`, `--like`, `--regex`, `--key`, `--limit`, `--json` |                                                                               |
+| Options: `--host`, `--like`, `--regex`, `--key`, `--limit`, `--format {tsv|csv|json}`, `--headers`, `--json` | |
 | **Config**                                                           |                                                                               |
 | `zbx config list`                                                    | List effective config (secrets redacted)                                      |
 | `zbx config get VAR [--raw]`                                         | Get a config value                                                            |
@@ -168,9 +168,29 @@ API Token mode: when `ZABBIX_API_TOKEN` is provided in config or environment, it
 
 ---
 
-## Completions
+## Output Formatting
 
-Generated from the CLI automatically (Bash only).
+Many list/search commands support flexible output:
+
+- `--format {tsv|csv|json}` — choose output format (default varies by command; typically TSV or CSV)
+- `--headers` — include header row for TSV/CSV outputs
+- `--json` — alias for `--format json`
+
+Examples:
+
+```
+zbx search hosts web --format csv --headers
+zbx template-list --format json | jq '.[].name'
+zbx problems --format tsv --headers | column -t -s $'\t'
+```
+
+Note: JSON output returns API result arrays suitable for piping into `jq`.
+
+---
+
+## Completions (Bash)
+
+Generated from the CLI automatically.
 
 - Generate: `make gen-completions`
 - Install: `make install-completions` (creates if missing, installs system- or user-scoped)
@@ -181,10 +201,10 @@ Install locations (Bash):
 
 What it does:
 
-* `zbx <TAB>` → all subcommands
-* `zbx search <TAB>` → entity names
-* `zbx config <TAB>` → config subcommands
-* Completes options parsed from each subcommand’s help (including global flags)
+- `zbx <TAB>` → all subcommands
+- `zbx search <TAB>` → entity names
+- `zbx config <TAB>` → config subcommands
+- Completes options parsed from each subcommand’s help (including global flags)
 
 ---
 

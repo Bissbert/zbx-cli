@@ -2,5 +2,16 @@
 set -euo pipefail
 SD="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"; PATH="$SD:$PATH"
 . "$SD/log-lib"; . "$SD/zbx-lib"
-[ "${1:-}" = "-h" ] && { echo "Usage: $(basename "$0")"; exit 0; }
+case "${1:-}" in
+  -h|--help)
+    cat <<'EOF'
+Usage: zbx login
+
+Ensure a valid API session by performing user.login if needed.
+
+Details:
+  Caches the session token with a 30-minute TTL (session mode).
+EOF
+    exit 0 ;;
+esac
 zbx_login && echo ok

@@ -2,6 +2,18 @@
 set -euo pipefail
 SD="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"; PATH="$SD:$PATH"
 . "$SD/log-lib"; . "$SD/zbx-lib"
+case "${1:-}" in
+  -h|--help)
+    cat <<'EOF'
+Usage: zbx host-enable <host>
+
+Enable a host.
+
+Details:
+  Sets host status to enabled (status=0).
+EOF
+    exit 0 ;;
+esac
 host="${1:-}"; [ -z "$host" ] && { echo "Usage: $(basename "$0") <host>"; exit 2; }
 hid="$(jq -n --arg host "$host" '{filter:{host:$host}, output:["hostid"]}' | zbx_call host.get | jq -r '.result[0].hostid // empty')"
 [ -z "$hid" ] && { log_error "Host not found: $host"; exit 1; }

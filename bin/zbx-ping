@@ -2,4 +2,16 @@
 set -euo pipefail
 SD="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"; PATH="$SD:$PATH"
 . "$SD/log-lib"; . "$SD/zbx-lib"
+case "${1:-}" in
+  -h|--help)
+    cat <<'EOF'
+Usage: zbx ping
+
+Lightweight API health check.
+
+Details:
+  Output: prints "pong" on success.
+EOF
+    exit 0 ;;
+esac
 jq -n '{}' | zbx_call apiinfo.version >/dev/null && echo pong

@@ -2,4 +2,46 @@
 set -euo pipefail
 SD="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"; PATH="$SD:$PATH"
 . "$SD/log-lib"; . "$SD/zbx-lib"
-jq -n '{selectHosts:"extend", output:"extend"}' | zbx_call maintenance.get | jq -r '.result[] | [.maintenanceid,.name,.active_since,.active_till]|@tsv'
+FORMAT=tsv; HEADERS=0
+while [ $# -gt 0 ]; do
+  case "${1:-}" in
+    --format) FORMAT="${2:-tsv}"; shift ;;
+    --headers) HEADERS=1 ;;
+    -h|--help)
+      cat <<'EOF'
+Usage: zbx maint-list
+
+List maintenance windows.
+
+Details:
+  Output: TSV columns: maintenanceid, name, active_since, active_till.
+  Options:
+    --format {tsv|csv|json}  Output format (default: tsv)
+    --headers                Print header row (tsv/csv only)
+EOF
+      exit 0 ;;
+    *) break ;;
+  esac
+  shift || true
+done
+
+case "${1:-}" in
+  -h|--help)
+    cat <<'EOF'
+Usage: zbx maint-list
+
+List maintenance windows.
+
+Details:
+  Output: TSV columns: maintenanceid, name, active_since, active_till.
+  Options:
+    --format {tsv|csv|json}  Output format (default: tsv)
+    --headers                Print header row (tsv/csv only)
+EOF
+    exit 0 ;;
+esac
+resp="$(jq -n '{selectHosts:"extend", output:["maintenanceid","name","active_since","active_till"]}' | zbx_call maintenance.get)"
+if [ "$FORMAT" = "json" ]; then jq '.result' <<<"$resp"; exit 0; fi
+headers='["maintenanceid","name","active_since","active_till"]'
+rows="$(jq -c '.result | map([.maintenanceid,.name,.active_since,.active_till])' <<<"$resp")"
+zbx_format_rows "$FORMAT" "$headers" "$rows" "$HEADERS"

@@ -2,6 +2,18 @@
 set -euo pipefail
 SD="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"; PATH="$SD:$PATH"
 . "$SD/log-lib"; . "$SD/zbx-lib"
+case "${1:-}" in
+  -h|--help)
+    cat <<'EOF'
+Usage: zbx host-create <host> <ip> [group]
+
+Create an agent host (IPv4) in a group.
+
+Details:
+  Default group: "Linux servers".
+EOF
+    exit 0 ;;
+esac
 host="${1:-}"; ip="${2:-}"; group="${3:-Linux servers}"
 [ -z "$host" ] || [ -z "$ip" ] && { echo "Usage: $(basename "$0") <host> <ip> [group-name]"; exit 2; }
 gid="$(jq -n --arg name "$group" '{filter:{name:$name}, output:["groupid"]}' | zbx_call hostgroup.get | jq -r '.result[0].groupid // empty')"

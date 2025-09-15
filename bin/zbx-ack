@@ -1,7 +1,47 @@
 #!/usr/bin/env bash
 set -euo pipefail
+
 SD="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"; PATH="$SD:$PATH"
-. "$SD/log-lib"; . "$SD/zbx-lib"
-id="${1:-}"; msg="${2:-Acknowledged via zbx}"
-[ -z "$id" ] && { echo "Usage: $(basename "$0") <eventid|problemid> [message]"; exit 2; }
-jq -n --arg id "$id" --arg msg "$msg" '{eventids:[$id|tonumber], action:6, message:$msg}' | zbx_call event.acknowledge | jq '.result'
+# shellcheck source=bin/log-lib
+. "$SD/log-lib"
+# shellcheck source=bin/zbx-lib
+. "$SD/zbx-lib"
+
+usage() {
+  cat <<'EOF'
+Usage: zbx ack <eventid> [message]
+
+Acknowledge a problem (event) and optionally add a message.
+
+Details:
+- Equivalent API: event.acknowledge
+- Uses action bitmask: 2=acknowledge, 4=add message, combined as needed (6 when message provided).
+EOF
+}
+
+case "${1:-}" in
+  -h|--help) usage; exit 0 ;;
+esac
+
+[ $# -lt 1 ] && { usage; exit 2; }
+EVENTID="$1"; shift || true
+MESSAGE="${1:-}"
+
+ACTION=2
+if [ -n "$MESSAGE" ]; then ACTION=$((2+4)); fi
+
+log_info "Acknowledging event $EVENTID (action=$ACTION)"
+
+req=$(jq -n --arg id "$EVENTID" --arg msg "$MESSAGE" --argjson action "$ACTION" '
+  {eventids: [$id|tonumber], action: $action} 
+  | if ($msg|length) > 0 then . + {message: $msg} else . end
+')
+
+resp=$(printf '%s' "$req" | zbx_call event.acknowledge)
+
+if jq -e '.error? // empty' >/dev/null 2>&1 <<<"$resp"; then
+  log_error "Failed to acknowledge: $(jq -c '.error' <<<"$resp")"
+  exit 1
+fi
+
+jq -r '.result' <<<"$resp"

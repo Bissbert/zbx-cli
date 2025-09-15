@@ -2,4 +2,47 @@
 set -euo pipefail
 SD="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"; PATH="$SD:$PATH"
 . "$SD/log-lib"; . "$SD/zbx-lib"
-jq -n '{output:["groupid","name"], sortfield:"name"}' | zbx_call hostgroup.get | jq -r '.result[] | [.groupid,.name]|@tsv'
+FORMAT=tsv; HEADERS=0
+while [ $# -gt 0 ]; do
+  case "${1:-}" in
+    --format) FORMAT="${2:-tsv}"; shift ;;
+    --headers) HEADERS=1 ;;
+    -h|--help)
+      cat <<'EOF'
+Usage: zbx host-groups
+
+List host groups.
+
+Details:
+  Output: TSV columns: groupid, name.
+  Options:
+    --format {tsv|csv|json}  Output format (default: tsv)
+    --headers                Print header row (tsv/csv only)
+EOF
+      exit 0 ;;
+    *) break ;;
+  esac
+  shift || true
+done
+
+case "${1:-}" in
+  -h|--help)
+    cat <<'EOF'
+Usage: zbx host-groups
+
+List host groups.
+
+Details:
+  Output: TSV columns: groupid, name.
+  Options:
+    --format {tsv|csv|json}  Output format (default: tsv)
+    --headers                Print header row (tsv/csv only)
+EOF
+    exit 0 ;;
+esac
+
+resp="$(jq -n '{output:["groupid","name"], sortfield:"name"}' | zbx_call hostgroup.get)"
+if [ "$FORMAT" = "json" ]; then jq '.result' <<<"$resp"; exit 0; fi
+headers='["groupid","name"]'
+rows="$(jq -c '.result | map([.groupid,.name])' <<<"$resp")"
+zbx_format_rows "$FORMAT" "$headers" "$rows" "$HEADERS"

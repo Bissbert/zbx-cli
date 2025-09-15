@@ -2,7 +2,18 @@
 set -euo pipefail
 SD="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"; PATH="$SD:$PATH"
 . "$SD/log-lib"; . "$SD/zbx-lib"
-[ "${1:-}" = "-h" ] && { echo "Usage: cat file.tsv | $(basename "$0")  # host<TAB>{MACRO}<TAB>value"; exit 0; }
+case "${1:-}" in
+  -h|--help)
+    cat <<'EOF'
+Usage: cat macros.tsv | zbx macro-bulk-set
+
+Bulk set host macros from TSV input.
+
+Details:
+  Input format: host<TAB>{MACRO}<TAB>value
+EOF
+    exit 0 ;;
+esac
 while IFS=$'\t' read -r host macro value; do
   [ -z "${host:-}" ] && continue
   hid="$(jq -n --arg host "$host" '{filter:{host:$host}, output:["hostid"]}' | zbx_call host.get | jq -r '.result[0].hostid // empty')"

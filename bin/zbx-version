@@ -2,5 +2,24 @@
 set -euo pipefail
 SD="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"; PATH="$SD:$PATH"
 . "$SD/log-lib"; . "$SD/zbx-lib"
+case "${1:-}" in
+  -h|--help)
+  cat <<'EOF'
+Usage: zbx version
+
+Show API version and current user.
+
+Details:
+  Output: two lines: api.version and user.
+EOF
+    exit 0 ;;
+esac
 jq -n '{}' | zbx_call apiinfo.version | jq -r '.result' | sed 's/^/api.version: /'
-jq -n '{}' | zbx_call user.get | jq -r '.result[0] | "user: \(.alias) (\(.name) \(.surname))"' || true
+jq -n '{}' | zbx_call user.get | jq -r '
+  .result[0] as $u
+  | if ($u.alias // "") | length > 0 then
+      "user: \($u.alias) (\($u.name // "") \($u.surname // ""))"
+    else
+      "user: \($u.name // "") \($u.surname // "")"
+    end
+' || true

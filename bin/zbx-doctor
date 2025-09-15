@@ -1,0 +1,212 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SD="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"; PATH="$SD:$PATH"
+# shellcheck source=bin/log-lib
+. "$SD/log-lib"
+
+usage() {
+  cat <<'EOF'
+Usage: zbx doctor [--fix] [--yes] [--json]
+
+Environment and config checks with optional fixes.
+
+Details:
+  Checks environment, dependencies and config, and optionally offers fixes.
+  
+  Options:
+    --fix       Offer to run suggested fixes (e.g., install jq/curl)
+    --yes       Non-interactive; assume yes to prompts when used with --fix
+    --json      Output machine-readable JSON report (no prompts)
+  -h, --help  Show help
+EOF
+}
+
+FIX=0; YES=0; OUT_JSON=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --fix) FIX=1 ;;
+    --yes) YES=1 ;;
+    --json) OUT_JSON=1 ;;
+    -h|--help) usage; exit 0 ;;
+    *) log_error "Unknown option: $1"; usage; exit 2 ;;
+  esac
+  shift || true
+done
+
+# Detect a package manager and provide commands for installing packages
+detect_pkg_mgr() {
+  for pm in apt-get apt dnf yum zypper pacman apk brew port emerge nix-env choco winget pkg swupd; do
+    if command -v "$pm" >/dev/null 2>&1; then echo "$pm"; return 0; fi
+  done
+  echo ""; return 1
+}
+
+install_cmd_for() {
+  local pm="$1" pkg="$2" cmd=""
+  case "$pm" in
+    apt-get|apt) cmd="sudo $pm update && sudo $pm install -y $pkg" ;;
+    dnf|yum) cmd="sudo $pm install -y $pkg" ;;
+    zypper) cmd="sudo zypper install -y $pkg" ;;
+    pacman) cmd="sudo pacman -Sy --noconfirm $pkg" ;;
+    apk) cmd="sudo apk add $pkg" ;;
+    brew) cmd="brew install $pkg" ;;
+    port) cmd="sudo port install $pkg" ;;
+    emerge) cmd="sudo emerge $pkg" ;;
+    nix-env) cmd="nix-env -iA nixpkgs.$pkg" ;;
+    choco) cmd="choco install -y $pkg" ;;
+    winget) cmd="winget install --silent --accept-package-agreements --accept-source-agreements $pkg" ;;
+    pkg) cmd="sudo pkg install -y $pkg" ;;
+    swupd) cmd="sudo swupd bundle-add $pkg" ;;
+  esac
+  printf '%s' "$cmd"
+}
+
+confirm() {
+  local prompt="$1"
+  [ "$YES" -eq 1 ] && return 0
+  read -r -p "$prompt [y/N] " ans || true
+  case "$ans" in y|Y|yes|YES) return 0 ;; *) return 1 ;; esac
+}
+
+# Collect report entries
+rep_items=()
+add_item() { rep_items+=("$1") ; }
+
+status_ok() { add_item "{\"name\":$1,\"status\":\"ok\",\"detail\":$2}"; }
+status_warn() { add_item "{\"name\":$1,\"status\":\"warn\",\"detail\":$2}"; }
+status_fail() { add_item "{\"name\":$1,\"status\":\"fail\",\"detail\":$2}"; }
+
+# 1) Dependencies: bash, curl, jq
+missing=()
+for dep in bash curl jq; do
+  if command -v "$dep" >/dev/null 2>&1; then
+    ver="$($dep --version 2>/dev/null | head -n1 || true)"
+    status_ok "\"$dep\"" "\"$ver\""
+  else
+    missing+=("$dep")
+    status_fail "\"$dep\"" "\"not found in PATH\""
+  fi
+done
+
+if [ ${#missing[@]} -gt 0 ]; then
+  pm="$(detect_pkg_mgr || true)"
+  if [ -n "$pm" ]; then
+    for m in "${missing[@]}"; do
+      fixcmd="$(install_cmd_for "$pm" "$m")"
+      [ "$OUT_JSON" -eq 1 ] || log_warn "Dependency missing: $m. Suggested fix: $fixcmd"
+      if [ "$FIX" -eq 1 ] && confirm "Install $m using $pm?"; then
+        # shellcheck disable=SC2086
+        sh -c "$fixcmd" || log_error "Failed to run: $fixcmd"
+      fi
+    done
+  else
+    [ "$OUT_JSON" -eq 1 ] || log_warn "No known package manager found. Please install: ${missing[*]}"
+  fi
+fi
+
+# 2) Config and env
+# shellcheck source=bin/zbx-lib
+. "$SD/zbx-lib"
+
+cfg_path="${ZBX_CONFIG_ACTIVE:-}"
+if [ -n "$cfg_path" ] && [ -f "$cfg_path" ]; then
+  perm="$(stat -c '%a' "$cfg_path" 2>/dev/null || stat -f '%Lp' "$cfg_path" 2>/dev/null || echo '?')"
+  status_ok '"config"' "\"path=$cfg_path perm=$perm\""
+else
+  status_warn '"config"' '"no config found (using defaults)"'
+  if [ "$FIX" -eq 1 ] && confirm "Create a user config now?"; then
+    zbx-config init --scope user >/dev/null || true
+  fi
+fi
+
+# 3) Check critical vars
+if [ -n "${ZABBIX_URL:-}" ]; then
+  status_ok '"ZABBIX_URL"' "\"$ZABBIX_URL\""
+else
+  status_fail '"ZABBIX_URL"' '"not set"'
+  if [ "$FIX" -eq 1 ] && [ "$OUT_JSON" -eq 0 ] && confirm "Set ZABBIX_URL now?"; then
+    read -r -p "Enter Zabbix API URL: " newurl || true
+    [ -n "$newurl" ] && zbx-config set ZABBIX_URL "$newurl" --scope auto >/dev/null || true
+  fi
+fi
+
+if [ -n "${ZABBIX_API_TOKEN:-}" ]; then
+  status_ok '"AuthMode"' '"API token provided (no session file used)"'
+else
+  if [ -n "${ZABBIX_USER:-}" ] && [ -n "${ZABBIX_PASS:-}" ]; then
+    status_ok '"AuthMode"' '"user+password (session TTL 30m)"'
+  else
+    status_warn '"AuthMode"' '"no API token; user/password not fully set"'
+  fi
+fi
+
+# 4) TLS settings
+# 3.5) URL sanity
+case "${ZABBIX_URL:-}" in
+  *api_jsonrpc.php) : ;; 
+  *) status_warn '"ZABBIX_URL"' '"URL does not end with api_jsonrpc.php (expected API endpoint)"' ;;
+esac
+
+if [ -n "${ZABBIX_CA_CERT:-}" ] && [ ! -f "$ZABBIX_CA_CERT" ]; then
+  status_warn '"CA_CERT"' "\"file not found: $ZABBIX_CA_CERT\""
+fi
+if [ -n "${ZABBIX_CA_PATH:-}" ] && [ ! -d "$ZABBIX_CA_PATH" ]; then
+  status_warn '"CA_PATH"' "\"dir not found: $ZABBIX_CA_PATH\""
+fi
+
+# 5) Token file directory (session mode only)
+if [ -z "${ZABBIX_API_TOKEN:-}" ] && [ -n "${ZABBIX_TOKEN_FILE:-}" ]; then
+  tdir="$(dirname -- "$ZABBIX_TOKEN_FILE")"
+  if [ -d "$tdir" ] && [ -w "$tdir" ]; then
+    status_ok '"token_path"' "\"$ZABBIX_TOKEN_FILE\""
+  else
+    status_warn '"token_path"' "\"not writable: $ZABBIX_TOKEN_FILE\""
+    if [ "$FIX" -eq 1 ] && confirm "Create token directory $tdir?"; then
+      mkdir -p "$tdir" || true
+    fi
+  fi
+fi
+
+# 6) Connectivity: try apiinfo.version (lightweight), ping, and version
+api_ok=0
+if command -v curl >/dev/null 2>&1 && command -v jq >/dev/null 2>&1 && [ -n "${ZABBIX_URL:-}" ]; then
+  if out=$(printf '{}' | zbx call apiinfo.version 2>/dev/null); then
+    api_ok=1
+    status_ok '"apiinfo.version"' "\"$out\""
+  else
+    status_warn '"apiinfo.version"' '"failed (check URL/TLS/auth)"'
+  fi
+
+  # zbx ping should print 'pong' on success
+  if pong_out=$(zbx ping 2>/dev/null); then
+    if [ "${pong_out:-}" = "pong" ]; then
+      status_ok '"ping"' '"pong"'
+    else
+      status_warn '"ping"' "\"unexpected: ${pong_out}\""
+    fi
+  else
+    status_warn '"ping"' '"failed"'
+  fi
+
+  # zbx version prints api.version and user lines
+  if ver_out=$(zbx version 2>/dev/null); then
+    status_ok '"version"' "\"$(printf '%s' "$ver_out" | tr '\n' '; ')\""
+  else
+    status_warn '"version"' '"failed"'
+  fi
+fi
+
+if [ "$OUT_JSON" -eq 1 ]; then
+  printf '{"checks":[%s]}\n' "$(IFS=,; echo "${rep_items[*]}")"
+else
+  echo "Doctor report:"
+  for item in "${rep_items[@]}"; do
+    name=$(jq -r '.name' <<<"$item")
+    status=$(jq -r '.status' <<<"$item")
+    detail=$(jq -r '.detail' <<<"$item")
+    printf ' - %-12s [%s] %s\n' "$name" "$status" "$detail"
+  done
+fi
+
+exit 0

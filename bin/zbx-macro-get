@@ -2,7 +2,52 @@
 set -euo pipefail
 SD="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"; PATH="$SD:$PATH"
 . "$SD/log-lib"; . "$SD/zbx-lib"
+
+FORMAT=tsv; HEADERS=0
+while [ $# -gt 0 ]; do
+  case "${1:-}" in
+    --format) FORMAT="${2:-tsv}"; shift ;;
+    --headers) HEADERS=1 ;;
+    -h|--help)
+      cat <<'EOF'
+Usage: zbx macro-get <host>
+
+List macros for a host.
+
+Details:
+  Output: TSV columns: {MACRO}, value.
+  Options:
+    --format {tsv|csv|json}  Output format (default: tsv)
+    --headers                Print header row (tsv/csv only)
+EOF
+      exit 0 ;;
+    *) break ;;
+  esac
+  shift || true
+done
+
+case "${1:-}" in
+  -h|--help)
+    cat <<'EOF'
+Usage: zbx macro-get <host>
+
+List macros for a host.
+
+Details:
+  Output: TSV columns: {MACRO}, value.
+  Options:
+    --format {tsv|csv|json}  Output format (default: tsv)
+    --headers                Print header row (tsv/csv only)
+EOF
+    exit 0 ;;
+esac
+
 host="${1:-}"; [ -z "$host" ] && { echo "Usage: $(basename "$0") <host>"; exit 2; }
 hid="$(jq -n --arg host "$host" '{filter:{host:$host}, output:["hostid"]}' | zbx_call host.get | jq -r '.result[0].hostid // empty')"
 [ -z "$hid" ] && { log_error "Host not found: $host"; exit 1; }
-jq -n --arg hid "$hid" '{hostids:[$hid]}' | zbx_call usermacro.get | jq -r '.result[] | [.macro,.value]|@tsv'
+
+resp="$(jq -n --arg hid "$hid" '{hostids:[$hid]}' | zbx_call usermacro.get)"
+if [ "$FORMAT" = "json" ]; then jq '.result' <<<"$resp"; exit 0; fi
+headers='["macro","value"]'
+rows="$(jq -c '.result | map([.macro,.value])' <<<"$resp")"
+zbx_format_rows "$FORMAT" "$headers" "$rows" "$HEADERS"

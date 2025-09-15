@@ -1,36 +1,52 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
-PATH="$SCRIPT_DIR:$PATH"
-. "$SCRIPT_DIR/log-lib"
-. "$SCRIPT_DIR/zbx-lib"
+SD="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"; PATH="$SD:$PATH"
+# shellcheck source=bin/log-lib
+. "$SD/log-lib"
+# shellcheck source=bin/zbx-lib
+. "$SD/zbx-lib"
 
 usage() {
-  cat <<EOF
-Usage: $(basename "$0") <method> [jq-filter]
-Reads JSON params on stdin (or uses {}), calls Zabbix <method>, prints response.
-If a jq filter is provided, it applies to .result
+  cat <<'EOF'
+Usage: zbx call <method> [jq-filter]
+
+Low-level JSON-RPC invoker that reads params JSON on stdin and prints results.
+
+Details:
+- Reads params JSON from stdin (or '{}' if empty), calls the given Zabbix API method and prints the result.
+- Options:
+  -r, --raw     Print full API response (not just .result)
+  -h, --help    Show this help
+- Examples:
+  echo '{}' | zbx call apiinfo.version
+  echo '{"output":["hostid","host"],"limit":50}' | zbx call host.get '.[] | {hostid,host}'
 EOF
 }
 
-[ "${1:-}" = "-h" ] && { usage; exit 0; }
-method="${1:-}"
-[ -z "$method" ] && { log_error "Missing method"; usage; exit 2; }
-jqfilter="${2:-}"
+RAW=0
+case "${1:-}" in
+  -h|--help) usage; exit 0 ;;
+  -r|--raw) RAW=1; shift || true ;;
+esac
 
-params="$(cat - || true)"
-[ -z "${params:-}" ] && params='{}'
+[ $# -lt 1 ] && { usage; exit 2; }
+METHOD="$1"; shift || true
+FILTER="${1:-}"
 
-out="$(printf '%s' "$params" | zbx_call "$method")"
-if jq -e '.error?' >/dev/null 2>&1 <<<"$out"; then
-  log_error "Zabbix API error: $(jq -c '.error' <<<"$out")"
-  printf '%s\n' "$out"
-  exit 1
+params="$(cat || true)"; [ -n "$params" ] || params='{}'
+
+log_debug "Calling $METHOD (raw=$RAW)"
+resp="$(printf '%s' "$params" | zbx_call "$METHOD")"
+
+if [ "$RAW" -eq 1 ]; then
+  printf '%s\n' "$resp"
+  exit 0
 fi
 
-if [ -n "$jqfilter" ]; then
-  jq -r --argfile R <(jq '.result' <<<"$out") '$R | '"$jqfilter"
+if [ -n "$FILTER" ]; then
+  # shellcheck disable=SC2016
+  jq -r ".result | $FILTER" <<<"$resp"
 else
-  jq '.' <<<"$out"
+  jq -r '.result' <<<"$resp"
 fi

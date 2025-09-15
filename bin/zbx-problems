@@ -2,4 +2,46 @@
 set -euo pipefail
 SD="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"; PATH="$SD:$PATH"
 . "$SD/log-lib"; . "$SD/zbx-lib"
-jq -n '{recent:"true", sortfield:"eventid", sortorder:"DESC", output:"extend", selectAcknowledges:"extend", selectTags:"extend"}' | zbx_call problem.get | jq -r '.result[] | [.eventid,.name,.severity,.acknowledged,.clock]|@tsv'
+FORMAT=tsv; HEADERS=0
+while [ $# -gt 0 ]; do
+  case "${1:-}" in
+    --format) FORMAT="${2:-tsv}"; shift ;;
+    --headers) HEADERS=1 ;;
+    -h|--help)
+      cat <<'EOF'
+Usage: zbx problems
+
+List current problems (recent=true) as TSV.
+
+Details:
+  Output: TSV columns: eventid, name, severity, acknowledged, clock.
+  Options:
+    --format {tsv|csv|json}  Output format (default: tsv)
+    --headers                Print header row (tsv/csv only)
+EOF
+      exit 0 ;;
+    *) break ;;
+  esac
+  shift || true
+done
+
+case "${1:-}" in
+  -h|--help)
+    cat <<'EOF'
+Usage: zbx problems
+
+List current problems (recent=true) as TSV.
+
+Details:
+  Output: TSV columns: eventid, name, severity, acknowledged, clock.
+  Options:
+    --format {tsv|csv|json}  Output format (default: tsv)
+    --headers                Print header row (tsv/csv only)
+EOF
+    exit 0 ;;
+esac
+resp="$(jq -n '{recent:"true", sortfield:"eventid", sortorder:"DESC", output:["eventid","name","severity","acknowledged","clock"]}' | zbx_call problem.get)"
+if [ "$FORMAT" = "json" ]; then jq '.result' <<<"$resp"; exit 0; fi
+headers='["eventid","name","severity","acknowledged","clock"]'
+rows="$(jq -c '.result | map([.eventid,.name,.severity,.acknowledged,.clock])' <<<"$resp")"
+zbx_format_rows "$FORMAT" "$headers" "$rows" "$HEADERS"

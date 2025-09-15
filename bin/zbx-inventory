@@ -2,12 +2,48 @@
 set -euo pipefail
 SD="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"; PATH="$SD:$PATH"
 . "$SD/log-lib"; . "$SD/zbx-lib"
-jq -n '{output:["hostid","host","name","status"], selectInventory:"extend"}' | zbx_call host.get | jq -r '
-  ["hostid","host","name","status","asset_tag","hardware","location","site_address_a","site_city","site_country"] as $h |
-  ( $h | @csv ),
-  ( .result[] | [
-      .hostid, .host, .name, .status,
-      .inventory.asset_tag, .inventory.hardware,
-      .inventory.location, .inventory.site_address_a,
-      .inventory.site_city, .inventory.site_country
-    ] | @csv )'
+FORMAT=csv; HEADERS=1
+while [ $# > 0 ]; do
+  case "${1:-}" in
+    --format) FORMAT="${2:-csv}"; shift ;;
+    --headers) HEADERS=1 ;;
+    -h|--help)
+      cat <<'EOF'
+Usage: zbx inventory
+
+Export host inventory as CSV to stdout.
+
+Details:
+  Output: CSV header and rows (selected common fields).
+  Options:
+    --format {tsv|csv|json}  Output format (default: csv)
+    --headers                Print header row (on by default for csv)
+EOF
+      exit 0 ;;
+    *) break ;;
+  esac
+  shift || true
+done
+
+case "${1:-}" in
+  -h|--help)
+    cat <<'EOF'
+Usage: zbx inventory
+
+Export host inventory as CSV to stdout.
+
+Details:
+  Output: CSV header and rows (selected common fields).
+  Options:
+    --format {tsv|csv|json}  Output format (default: csv)
+    --headers                Print header row (on by default for csv)
+EOF
+    exit 0 ;;
+esac
+resp="$(jq -n '{output:["hostid","host","name","status"], selectInventory:"extend"}' | zbx_call host.get)"
+if [ "$FORMAT" = "json" ]; then
+  jq '.result' <<<"$resp"; exit 0
+fi
+headers='["hostid","host","name","status","asset_tag","hardware","location","site_address_a","site_city","site_country"]'
+rows="$(jq -c '.result | map([ .hostid, .host, .name, .status, .inventory.asset_tag, .inventory.hardware, .inventory.location, .inventory.site_address_a, .inventory.site_city, .inventory.site_country ])' <<<"$resp")"
+zbx_format_rows "$FORMAT" "$headers" "$rows" "$HEADERS"

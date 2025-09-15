@@ -3,40 +3,278 @@ set -euo pipefail
 
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 PATH="$SCRIPT_DIR:$PATH"
-
+# shellcheck source=bin/log-lib
 . "$SCRIPT_DIR/log-lib"
 
-usage() {
+# --- discovery ---------------------------------------------------------------
+
+_list_subcommands() {
+  # Find *executable* commands named zbx-* on PATH (unique + sorted)
+  # compgen -c is fast and portable for this
+  compgen -c \
+  | grep -E '^zbx-' \
+  | sort -u
+}
+
+_cmd_name_only() {
+  sed -E 's|^.*/||'
+}
+
+_cmd_to_short() {
+  sed -E 's/^zbx-//'
+}
+
+_cmd_path() {
+  # type -P returns the path of the command if found
+  type -P "$1" 2>/dev/null || true
+}
+
+_cmd_desc() {
+  # Try to extract a single-line description from the subcommand's -h/--help
+  # Strategy:
+  #   1) first non-empty line of "$cmd -h" OR "$cmd --help"
+  #   2) strip leading "Usage:" if that is the first word, fall back to next line if available
+  local cmd="$1"
+  local out line
+  out="$("$cmd" -h 2>/dev/null || "$cmd" --help 2>/dev/null || true)"
+  # Fall back: empty
+  [ -z "$out" ] && { echo ""; return; }
+  # Prefer the first non-empty line that does NOT start with "Usage:"
+  line="$(printf '%s\n' "$out" \
+          | sed -E '/^[[:space:]]*$/d' \
+          | awk 'BEGIN{IGNORECASE=1} !/^[[:space:]]*Usage:/ {print; exit} END{}')"
+  # Fallback: if nothing matched, take the first non-empty line
+  if [ -z "$line" ]; then
+    line="$(printf '%s\n' "$out" | sed -E '/^[[:space:]]*$/d' | head -n1)"
+  fi
+  # Trim
+  printf '%s' "$line" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//'
+}
+
+# Built-in fallback descriptions for common verbs (used if -h doesn’t exist)
+declare -A _FALLBACK_DESC=(
+  [zbx-hosts-list]="List hosts (hostid and host)"
+  [zbx-host-get]="Show full JSON for a host"
+  [zbx-host-create]="Create an agent host (IPv4)"
+  [zbx-host-enable]="Enable a host"
+  [zbx-host-disable]="Disable a host"
+  [zbx-host-del]="Delete a host"
+  [zbx-host-groups]="List host groups"
+  [zbx-template-list]="List templates"
+  [zbx-template-link]="Link a template to a host"
+  [zbx-template-unlink]="Unlink a template from a host"
+  [zbx-macro-get]="List macros for a host"
+  [zbx-macro-set]="Set/update a macro on a host"
+  [zbx-macro-del]="Delete a macro on a host"
+  [zbx-macro-bulk-set]="Bulk set macros from TSV"
+  [zbx-problems]="List current problems"
+  [zbx-ack]="Acknowledge a problem/event"
+  [zbx-triggers]="List triggers for a host"
+  [zbx-trigger-enable]="Enable a trigger"
+  [zbx-trigger-disable]="Disable a trigger"
+  [zbx-maint-create]="Create a maintenance window"
+  [zbx-maint-list]="List maintenance windows"
+  [zbx-maint-del]="Delete a maintenance window"
+  [zbx-item-find]="Find itemids by host + key"
+  [zbx-history]="Fetch numeric history to TSV"
+  [zbx-trends]="Fetch numeric trends to TSV"
+  [zbx-discovery]="Show discovery (LLD) items"
+  [zbx-inventory]="Export host inventory (CSV)"
+  [zbx-login]="Ensure a valid API session"
+  [zbx-version]="Show API version and user"
+  [zbx-ping]="Lightweight API health check"
+  [zbx-doctor]="Environment and config checks"
+  [zbx-search]="Search across entities"
+  [zbx-config]="Manage config (get/set/list/edit)"
+  [zbx-call]="Low-level JSON-RPC invoker"
+)
+
+_group_of() {
+  # Categorise by basename pattern
+  local base="$1"
+  case "$base" in
+    zbx-host-*|zbx-hosts-list|zbx-host-get) echo "Hosts";;
+    zbx-template-*) echo "Templates";;
+    zbx-macro-*) echo "Macros";;
+    zbx-trigger-*|zbx-triggers|zbx-ack|zbx-problems) echo "Problems & Triggers";;
+    zbx-maint-*) echo "Maintenance";;
+    zbx-item-*|zbx-history|zbx-trends) echo "Items / History / Trends";;
+    zbx-discovery|zbx-inventory) echo "Discovery & Inventory";;
+    zbx-login|zbx-version|zbx-ping) echo "Auth & Health";;
+    zbx-doctor) echo "Auth & Health";;
+    zbx-search) echo "Search";;
+    zbx-config) echo "Config";;
+    zbx-call) echo "Low-level";;
+    *) echo "Other";;
+  esac
+}
+
+_print_group() {
+  local title="$1"; shift
+  local cmds=("$@")
+  [ "${#cmds[@]}" -eq 0 ] && return 0
+  printf '\n%s\n' "$title"
+  printf '%s\n' "----------------------------------------------------------------"
+  local c base short desc
+  for c in "${cmds[@]}"; do
+    base="$(printf '%s' "$c" | _cmd_name_only)"
+    short="$(printf '%s' "$base" | _cmd_to_short)"
+    desc="$(_cmd_desc "$c")"
+    if [ -z "$desc" ] && [ -n "${_FALLBACK_DESC[$base]+x}" ]; then
+      desc="${_FALLBACK_DESC[$base]}"
+    fi
+    printf '  %-24s %s\n' "$short" "${desc:-}"
+  done
+}
+
+_show_help() {
+  cat <<'EOF'
+Usage:
+  zbx <command> [args...]
+  zbx help                    # show all commands (grouped)
+  zbx help <command>          # show help for a subcommand
+  zbx --list                  # list subcommands (plain)
+  zbx --where <command>       # print resolved path to a subcommand
+
+Tips:
+  • New commands appear automatically: drop an executable named "zbx-<name>" anywhere on your $PATH.
+  • Use "zbx call" for ad-hoc JSON-RPC: echo '{}' | zbx call host.get '.[] | {hostid,host}'
+EOF
+
+  # Discover and group commands
+  mapfile -t all < <(_list_subcommands)
+  [ "${#all[@]}" -eq 0 ] && { echo; echo "(No subcommands found on PATH.)"; return; }
+
+  # Build groups
+  declare -A buckets
+  declare -A order
+  local idx=0
+  for c in "${all[@]}"; do
+    g="$(_group_of "$c")"
+    # aggregate paths by group (preserve full path for later desc extraction)
+    buckets["$g"]+="${buckets[$g]+$'\n'}$c"
+    if [ -z "${order[$g]+x}" ]; then order["$g"]=$((idx++)); fi
+  done
+
+  # Emit groups in a deterministic order
+  echo
+  for g in "Auth & Health" "Hosts" "Templates" "Macros" "Problems & Triggers" "Maintenance" "Items / History / Trends" "Discovery & Inventory" "Search" "Config" "Low-level" "Other"; do
+    [ -n "${buckets[$g]+x}" ] || continue
+    mapfile -t arr < <(printf '%s\n' "${buckets[$g]}" | sort)
+    _print_group "$g" "${arr[@]}"
+  done
+  echo
+}
+
+_usage_brief() {
   cat <<'EOF'
 Usage: zbx <command> [args...]
-Run "zbx help <command>" for help.
+Try "zbx help" to see all available commands.
 EOF
 }
 
-help_cmd="${1:-}"
-if [ "${help_cmd:-}" = "-h" ] || [ "${help_cmd:-}" = "--help" ] || [ "${help_cmd:-}" = "help" -a "${2:-}" = "" ]; then
-  usage; exit 0
-fi
+# --- CLI --------------------------------------------------------------------
 
-if [ "${help_cmd:-}" = "help" ] && [ -n "${2:-}" ]; then
-  cmd="zbx-${2}"
-  if command -v "$cmd" >/dev/null 2>&1; then
-    "$cmd" -h || true
+# Extract global flags from anywhere in argv and rebuild argv without them.
+# Supported globals: --insecure, --cacert <file>, --capath <dir>
+# Rebuild argv without global flags and re-set $@ accordingly (preserve spaces)
+{
+  args=("$@")
+  new_argv=()
+  i=0
+  while [ $i -lt ${#args[@]} ]; do
+    arg="${args[$i]}"
+    case "$arg" in
+      --insecure)
+        export ZABBIX_VERIFY_TLS=0
+        i=$((i+1))
+        ;;
+      --cacert)
+        next="${args[$((i+1))]:-}"
+        [ -n "$next" ] && export ZABBIX_CA_CERT="$next"
+        i=$((i+2))
+        ;;
+      --capath)
+        next="${args[$((i+1))]:-}"
+        [ -n "$next" ] && export ZABBIX_CA_PATH="$next"
+        i=$((i+2))
+        ;;
+      *)
+        new_argv+=("$arg")
+        i=$((i+1))
+        ;;
+    esac
+  done
+  set -- "${new_argv[@]}"
+}
+
+case "${1:-}" in
+  -h|--help|"help")
+    if [ "${2:-}" != "" ] && [ "${1:-}" != "--help" ] && [ "${1:-}" != "-h" ]; then
+      sub="$2"
+      cmd="zbx-$sub"
+      if type -P "$cmd" >/dev/null 2>&1; then
+        # Delegate -h/--help to subcommand
+        "$cmd" -h 2>/dev/null || "$cmd" --help 2>/dev/null || {
+          echo "No help available for '$sub'."; exit 1;
+        }
+        exit 0
+      else
+        log_error "Unknown command: $sub"
+        exit 2
+      fi
+    else
+      _show_help
+      exit 0
+    fi
+  ;;
+  --list)
+    _list_subcommands | _cmd_to_short
     exit 0
-  else
-    echo "Unknown command: $2"
-    exit 2
-  fi
-fi
+  ;;
+  --where)
+    sub="${2:-}"; [ -z "$sub" ] && { log_error "Usage: zbx --where <command>"; exit 2; }
+    cmd="zbx-$sub"
+    p="$(_cmd_path "$cmd")"
+    [ -n "$p" ] && { echo "$p"; exit 0; } || { log_error "Not found: $sub"; exit 1; }
+  ;;
+esac
 
-[ $# -lt 1 ] && { usage; exit 2; }
+[ $# -lt 1 ] && { _usage_brief; exit 2; }
 
 sub="$1"; shift || true
-cmd="zbx-${sub}"
 
-if ! command -v "$cmd" >/dev/null 2>&1; then
-  echo "Unknown command: ${sub}"
+# Built-in lightweight handler for "call" to support piped stdin in restricted sandboxes
+if [ "$sub" = "call" ]; then
+  # Minimal inline implementation to avoid an extra exec
+  # shellcheck source=bin/log-lib
+  . "$SCRIPT_DIR/log-lib"
+  # shellcheck source=bin/zbx-lib
+  . "$SCRIPT_DIR/zbx-lib"
+  RAW=0
+  case "${1:-}" in
+    -h|--help)
+      echo "Usage: zbx call <method> [jq-filter]"; exit 0 ;;
+    -r|--raw)
+      RAW=1; shift || true ;;
+  esac
+  [ $# -lt 1 ] && { echo "Usage: zbx call <method> [jq-filter]"; exit 2; }
+  METHOD="$1"; shift || true
+  FILTER="${1:-}"
+  params="$(cat || true)"; [ -n "$params" ] || params='{}'
+  resp="$(printf '%s' "$params" | zbx_call "$METHOD")"
+  if [ "$RAW" -eq 1 ]; then printf '%s\n' "$resp"; exit 0; fi
+  if [ -n "$FILTER" ]; then jq -r ".result | $FILTER" <<<"$resp"; else jq -r '.result' <<<"$resp"; fi
+  exit 0
+fi
+
+cmd="zbx-$sub"
+path="$(_cmd_path "$cmd")"
+
+if [ -z "$path" ]; then
+  log_error "Unknown command: ${sub}"
+  echo 'Run "zbx help" to see all commands.'
   exit 2
 fi
 
-exec "$cmd" "$@"
+exec "$path" "$@"

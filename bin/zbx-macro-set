@@ -2,6 +2,18 @@
 set -euo pipefail
 SD="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"; PATH="$SD:$PATH"
 . "$SD/log-lib"; . "$SD/zbx-lib"
+case "${1:-}" in
+  -h|--help)
+    cat <<'EOF'
+Usage: zbx macro-set <host> <{MACRO}> <value>
+
+Set or update a macro on a host.
+
+Details:
+  Creates or updates the macro value for the given host.
+EOF
+    exit 0 ;;
+esac
 host="${1:-}"; macro="${2:-}"; value="${3:-}"
 [ -z "$host" ] || [ -z "$macro" ] || [ -z "$value" ] && { echo "Usage: $(basename "$0") <host> <{MACRO}> <value>"; exit 2; }
 hid="$(jq -n --arg host "$host" '{filter:{host:$host}, output:["hostid"]}' | zbx_call host.get | jq -r '.result[0].hostid // empty')"

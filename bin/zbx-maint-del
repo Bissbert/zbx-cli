@@ -2,5 +2,17 @@
 set -euo pipefail
 SD="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"; PATH="$SD:$PATH"
 . "$SD/log-lib"; . "$SD/zbx-lib"
+case "${1:-}" in
+  -h|--help)
+    cat <<'EOF'
+Usage: zbx maint-del <maintenanceid>
+
+Delete a maintenance window by ID.
+
+Details:
+  Removes the maintenance record with the given ID.
+EOF
+    exit 0 ;;
+esac
 mid="${1:-}"; [ -z "$mid" ] && { echo "Usage: $(basename "$0") <maintenanceid>"; exit 2; }
 jq -n --arg mid "$mid" '{maintenanceids:[$mid|tonumber]}' | zbx_call maintenance.delete | jq '.result'

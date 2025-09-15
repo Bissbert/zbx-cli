@@ -2,18 +2,17 @@
 set -euo pipefail
 
 SD="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"; PATH="$SD:$PATH"
-
-# ---- inline minimal logging (so zbx-config works even if log-lib isn't on PATH) ----
-log_error(){ echo "[ERROR] $*" >&2; }
-log_warn(){  echo "[WARN ] $*" >&2; }
-log_info(){  echo "[INFO ] $*" >&2; }
+# shellcheck source=bin/log-lib
+. "$SD/log-lib"
 
 # ---- config resolution (mirrors zbx-lib) ------------------------------------
 _find_config() {
   local try
   if [ -n "${ZBX_CONFIG:-}" ] && [ -f "$ZBX_CONFIG" ]; then printf '%s\n' "$ZBX_CONFIG"; return 0; fi
-  try="$SD/../config.sh"; [ -f "$try" ] && { printf '%s\n' "$try"; return 0; }
+  # Prefer CWD for interactive/project usage
   try="$PWD/config.sh";   [ -f "$try" ] && { printf '%s\n' "$try"; return 0; }
+  # Fallback to repo-local when running from the source tree
+  try="$SD/../config.sh"; [ -f "$try" ] && { printf '%s\n' "$try"; return 0; }
   try="${XDG_CONFIG_HOME:-$HOME/.config}/zbx/config.sh"; [ -f "$try" ] && { printf '%s\n' "$try"; return 0; }
   try="/etc/zbx/config.sh"; [ -f "$try" ] && { printf '%s\n' "$try"; return 0; }
   return 1
@@ -38,19 +37,24 @@ OVR_END="# <<< zbx-config overrides <<<"
 
 usage() {
   cat <<'EOF'
-Usage:
-  zbx config list
-  zbx config get VAR [--raw]
-  zbx config set VAR VALUE [--scope {auto|project|user|system}]
-  zbx config unset VAR [--scope {auto|project|user|system}]
-  zbx config init [--scope {auto|project|user|system}]
-  zbx config edit
-  zbx config path
+Usage: zbx config <subcommand> [...]
 
-Notes:
-- Overrides live in a managed block at the top of the file and take precedence.
-- Default scope is `auto`: project if writable, else user (~/.config/zbx/config.sh).
-- Set ZBX_CONFIG=/path/to/file to force a specific config file for all commands.
+Manage configuration and overrides for zbx.
+
+Details:
+  Subcommands:
+    zbx config list
+    zbx config get VAR [--raw]
+    zbx config set VAR VALUE [--scope {auto|project|user|system}]
+    zbx config unset VAR [--scope {auto|project|user|system}]
+    zbx config init [--scope {auto|project|user|system}]
+    zbx config edit
+    zbx config path
+
+  Notes:
+  - Overrides live in a managed block at the top of the file and take precedence.
+  - Default scope is `auto`: project if writable, else user (~/.config/zbx/config.sh).
+  - Set ZBX_CONFIG=/path/to/file to force a specific config file for all commands.
 EOF
 }
 
@@ -63,8 +67,11 @@ ensure_file() { local f="$1"; [ -f "$f" ] && return 0; mkdir -p "$(dirname "$f")
 : "${ZABBIX_PASS:=apipassword}"
 : "${ZABBIX_API_TOKEN:=}"
 : "${ZABBIX_VERIFY_TLS:=1}"
-: "${ZABBIX_TOKEN_FILE:=.zabbix_session.token}"
+: "${ZABBIX_TOKEN_FILE:=${XDG_STATE_HOME:-$HOME/.local/state}/zbx/session.token}"
 : "${ZABBIX_CURL_TIMEOUT:=25}"
+# Optional TLS settings (set one of these when using a custom CA)
+: "${ZABBIX_CA_CERT:=}"
+: "${ZABBIX_CA_PATH:=}"
 CFG
 log_info "Created $f"
 }
@@ -74,7 +81,8 @@ ensure_block() {
   if ! grep -qF "$OVR_BEGIN" "$f" 2>/dev/null; then
     tmp="$(mktemp)"
     { echo "$OVR_BEGIN"; echo "$OVR_END"; echo; cat "$f"; } >"$tmp"
-    mv "$tmp" "$f"
+    # Avoid mv attribute preserve errors on some filesystems; keep existing perms
+    cat "$tmp" > "$f" && rm -f "$tmp"
     log_info "Initialised override block in $f"
   fi
 }
@@ -83,15 +91,16 @@ write_override() {
   local f="$1" var="$2" val="$3" esc; esc="$(shell_escape "$val")"
   ensure_block "$f"
   tmp="$(mktemp)"
-  awk -v begin="$OVR_BEGIN" -v end="$OVR_END" -v var="$var" -v line="export "var"=\""$esc"\"" '
-    BEGIN{inblk=0; done=0}
+  awk -v begin="$OVR_BEGIN" -v end="$OVR_END" -v var="$var" -v value="$esc" '
+    BEGIN{inblk=0; done=0; line = "export " var "=\"" value "\""}
     {
       if ($0 == begin) {print; inblk=1; next}
       if ($0 == end)   { if (inblk && !done) print line; print; inblk=0; next }
-      if (inblk && $0 ~ ("^[[:space:]]*export[[:space:]]+"var"=")) { if(!done){print line; done=1}; next }
+      if (inblk && $0 ~ ("^[[:space:]]*export[[:space:]]+" var "=")) { if(!done){print line; done=1}; next }
       print
     }' "$f" >"$tmp"
-  mv "$tmp" "$f"
+  # Avoid mv attribute preserve errors; write in-place retaining mode/owner
+  cat "$tmp" > "$f" && rm -f "$tmp"
 }
 
 remove_override() {
@@ -103,10 +112,10 @@ remove_override() {
     {
       if ($0 == begin) {print; inblk=1; next}
       if ($0 == end)   {print; inblk=0; next}
-      if (inblk && $0 ~ ("^[[:space:]]*export[[:space:]]+"var"=")) next
+      if (inblk && $0 ~ ("^[[:space:]]*export[[:space:]]+" var "=")) next
       print
     }' "$f" >"$tmp"
-  mv "$tmp" "$f"
+  cat "$tmp" > "$f" && rm -f "$tmp"
 }
 
 get_effective() { local var="$1" cfg; cfg="$(_find_config || true)"; ( set -a; [ -n "$cfg" ] && . "$cfg"; printf '%s' "${!var-}" ); }
@@ -143,7 +152,7 @@ case "$cmd" in
 
   list)
     cfg="$(_find_config || true)"; [ -n "${cfg:-}" ] || { echo "(no config found)"; exit 0; }
-    for v in ZABBIX_URL ZABBIX_USER ZABBIX_PASS ZABBIX_API_TOKEN ZABBIX_VERIFY_TLS ZABBIX_CURL_TIMEOUT ZABBIX_TOKEN_FILE; do
+    for v in ZABBIX_URL ZABBIX_USER ZABBIX_PASS ZABBIX_API_TOKEN ZABBIX_VERIFY_TLS ZABBIX_CURL_TIMEOUT ZABBIX_TOKEN_FILE ZABBIX_CA_CERT ZABBIX_CA_PATH; do
       printf '%s=' "$v"; maybe_redact "$v" "$(get_effective "$v")" 0
     done
     ;;

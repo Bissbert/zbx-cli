@@ -1,0 +1,12 @@
+# Build artifacts
+completions/
+
+# Editor/OS junk
+.DS_Store
+*.swp
+*.swo
+*~
+
+# Shell history/caches
+.zcompdump*
+

@@ -2,6 +2,18 @@
 set -euo pipefail
 SD="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"; PATH="$SD:$PATH"
 . "$SD/log-lib"; . "$SD/zbx-lib"
+case "${1:-}" in
+  -h|--help)
+  cat <<'EOF'
+Usage: zbx template-unlink <host> <template-name>
+
+Unlink a template from a host.
+
+Details:
+  Removes the template from the host's linked templates.
+EOF
+    exit 0 ;;
+esac
 host="${1:-}"; template="${2:-}"
 [ -z "$host" ] || [ -z "$template" ] && { echo "Usage: $(basename "$0") <host> <template-name>"; exit 2; }
 hid="$(jq -n --arg host "$host" '{filter:{host:$host}, output:["hostid"]}' | zbx_call host.get | jq -r '.result[0].hostid // empty')"

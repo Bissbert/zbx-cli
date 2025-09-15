@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+# Minimal curl mock for tests: ignores most flags, reads -d payload, prints JSON.
+set -euo pipefail
+
+PAYLOAD=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -d)
+      PAYLOAD="$2"; shift 2 ;;
+    *)
+      shift ;;
+  esac
+done
+
+method=$(jq -r '.method // empty' <<<"$PAYLOAD" 2>/dev/null || true)
+case "$method" in
+  apiinfo.version)
+    jq -n '{jsonrpc:"2.0", result:"7.0.0", id:1}' ;;
+  user.get)
+    jq -n '{jsonrpc:"2.0", result:[{alias:"tester", name:"Test", surname:"User"}], id:1}' ;;
+  host.get)
+    # If filter.host provided, return one; else two
+    host=$(jq -r '.params.filter.host // empty' <<<"$PAYLOAD" 2>/dev/null || true)
+    if [ -n "$host" ]; then
+      jq -n --arg h "$host" '{jsonrpc:"2.0", result:[{hostid:"10101", host:$h, name:$h}], id:1}'
+    else
+      jq -n '{jsonrpc:"2.0", result:[{hostid:"10101", host:"web01", name:"Web 01"},{hostid:"10102", host:"db01", name:"DB 01"}], id:1}'
+    fi ;;
+  hostgroup.get)
+    jq -n '{jsonrpc:"2.0", result:[{groupid:"2001", name:"Linux servers"}], id:1}' ;;
+  template.get)
+    name=$(jq -r '.params.filter.name // empty' <<<"$PAYLOAD" 2>/dev/null || true)
+    if [ -n "$name" ]; then
+      jq -n --arg n "$name" '{jsonrpc:"2.0", result:[{templateid:"3001", name:$n}], id:1}'
+    else
+      jq -n '{jsonrpc:"2.0", result:[{templateid:"3001", name:"Template OS Linux"}], id:1}'
+    fi ;;
+  item.get)
+    jq -n '{jsonrpc:"2.0", result:[{"itemid":"4001","hostid":"10101","key_":"proc.num[nginx]","name":"Nginx processes","value_type":3},{"itemid":"4002","hostid":"10101","key_":"vfs.fs.size[/,free]","name":"Free disk /","value_type":3}], id:1}' ;;
+  trigger.get)
+    jq -n '{jsonrpc:"2.0", result:[{"triggerid":"5001","hostid":"10101","description":"CPU load high","priority":4,"status":0},{"triggerid":"5002","hostid":"10101","description":"Disk space low","priority":3,"status":0}], id:1}' ;;
+  problem.get)
+    jq -n '{jsonrpc:"2.0", result:[{"eventid":"6001","name":"CPU high on web01","severity":4,"clock":1700000000}], id:1}' ;;
+  usermacro.get)
+    jq -n '{jsonrpc:"2.0", result:[{"macro":"{ENV}","value":"prod"}], id:1}' ;;
+  event.acknowledge)
+    jq -n '{jsonrpc:"2.0", result:{eventids:["6001"]}, id:1}' ;;
+  host.update)
+    jq -n '{jsonrpc:"2.0", result:{hostids:["10101"]}, id:1}' ;;
+  host.delete)
+    jq -n '{jsonrpc:"2.0", result:{hostids:["10101"]}, id:1}' ;;
+  maintenance.get)
+    jq -n '{jsonrpc:"2.0", result:[{"maintenanceid":"7001","name":"Window","active_since":1700000000,"active_till":1700003600}], id:1}' ;;
+  maintenance.create)
+    jq -n '{jsonrpc:"2.0", result:{maintenanceids:["7001"]}, id:1}' ;;
+  template.massAdd|host.update)
+    jq -n '{jsonrpc:"2.0", result:{hostids:["10101"]}, id:1}' ;;
+  *)
+    # Default empty result
+    jq -n '{jsonrpc:"2.0", result:[], id:1}' ;;
+esac
+

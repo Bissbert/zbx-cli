@@ -2,7 +2,7 @@ PREFIX ?= /usr/local
 BINDIR := $(PREFIX)/bin
 SYSCONFDIR ?= /etc
 
-.PHONY: all install install-user uninstall test test-insecure gen-completions install-completions uninstall-completions
+.PHONY: all install install-user uninstall test test-insecure gen-completions install-completions uninstall-completions check
 
 all:
 	@echo "Run 'make install' (system) or 'make install-user' (per-user)."
@@ -73,6 +73,14 @@ test:
 test-insecure:
 	@echo ">> Running test suite (insecure TLS)"
 	ZBX_TEST_INSECURE=1 bash tests/run.sh
+
+check:
+	@echo ">> Running checks (shellcheck)"
+	@if command -v shellcheck >/dev/null 2>&1; then \
+	  shellcheck -x bin/zbx bin/zbx-* bin/log-lib bin/zbx-lib || exit 1; \
+	else \
+	  echo "shellcheck not found; skipping static analysis"; \
+	fi
 
 gen-completions:
 	@echo ">> Generating shell completions"

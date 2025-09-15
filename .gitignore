@@ -1,5 +1,6 @@
 # Build artifacts
 completions/
+config.sh
 
 # Editor/OS junk
 .DS_Store
@@ -9,4 +10,3 @@ completions/
 
 # Shell history/caches
 .zcompdump*
-

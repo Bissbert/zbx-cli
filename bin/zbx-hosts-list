@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 # shellcheck disable=SC1007,SC2015,SC1090,SC1091
+
 SD="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"; PATH="$SD:$PATH"
 . "$SD/log-lib"; . "$SD/zbx-lib"
+
 FORMAT=tsv; HEADERS=0
 while [ $# -gt 0 ]; do
   case "${1:-}" in
@@ -10,12 +12,12 @@ while [ $# -gt 0 ]; do
     --headers) HEADERS=1 ;;
     -h|--help)
       cat <<'EOF'
-Usage: zbx template-list
+Usage: zbx hosts-list
 
-List templates.
+List hosts (hostid and host).
 
 Details:
-  Output: TSV columns: templateid, name.
+  Output: columns: hostid, host.
   Options:
     --format {tsv|csv|json}  Output format (default: tsv)
     --headers                Print header row (tsv/csv only)
@@ -26,23 +28,9 @@ EOF
   shift || true
 done
 
-case "${1:-}" in
-  -h|--help)
-    cat <<'EOF'
-Usage: zbx template-list
-
-List templates.
-
-Details:
-  Output: TSV columns: templateid, name.
-  Options:
-    --format {tsv|csv|json}  Output format (default: tsv)
-    --headers                Print header row (tsv/csv only)
-EOF
-    exit 0 ;;
-esac
-resp="$(jq -n '{output:["templateid","name"], sortfield:"name"}' | zbx_call template.get)"
+resp="$(jq -n '{output:["hostid","host"], sortfield:"host"}' | zbx_call host.get)"
 if [ "$FORMAT" = "json" ]; then jq '.result' <<<"$resp"; exit 0; fi
-headers='["templateid","name"]'
-rows="$(jq -c '.result | map([.templateid,.name])' <<<"$resp")"
-zbx_format_rows "$FORMAT" "$headers" "$rows" "$HEADERS"
+headers_json='["hostid","host"]'
+rows="$(jq -c '.result | map([.hostid,.host])' <<<"$resp")"
+zbx_format_rows "$FORMAT" "$headers_json" "$rows" "$HEADERS"
+

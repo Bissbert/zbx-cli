@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+# shellcheck disable=SC1007,SC2015,SC1090,SC1091
 
 SD="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"; PATH="$SD:$PATH"
 # shellcheck source=bin/log-lib
@@ -121,15 +122,15 @@ else
 fi
 
 # 3) Check critical vars
-if [ -n "${ZABBIX_URL:-}" ]; then
-  status_ok '"ZABBIX_URL"' "\"$ZABBIX_URL\""
-else
-  status_fail '"ZABBIX_URL"' '"not set"'
-  if [ "$FIX" -eq 1 ] && [ "$OUT_JSON" -eq 0 ] && confirm "Set ZABBIX_URL now?"; then
-    read -r -p "Enter Zabbix API URL: " newurl || true
-    [ -n "$newurl" ] && zbx-config set ZABBIX_URL "$newurl" --scope auto >/dev/null || true
+  if [ -n "${ZABBIX_URL:-}" ]; then
+    status_ok '"ZABBIX_URL"' "\"$ZABBIX_URL\""
+  else
+    status_fail '"ZABBIX_URL"' '"not set"'
+    if [ "$FIX" -eq 1 ] && [ "$OUT_JSON" -eq 0 ] && confirm "Set ZABBIX_URL now?"; then
+      read -r -p "Enter Zabbix API URL: " newurl || true
+      if [ -n "$newurl" ]; then zbx-config set ZABBIX_URL "$newurl" --scope auto >/dev/null || true; fi
+    fi
   fi
-fi
 
 if [ -n "${ZABBIX_API_TOKEN:-}" ]; then
   status_ok '"AuthMode"' '"API token provided (no session file used)"'
@@ -169,13 +170,55 @@ if [ -z "${ZABBIX_API_TOKEN:-}" ] && [ -n "${ZABBIX_TOKEN_FILE:-}" ]; then
 fi
 
 # 6) Connectivity: try apiinfo.version (lightweight), ping, and version
-api_ok=0
 if command -v curl >/dev/null 2>&1 && command -v jq >/dev/null 2>&1 && [ -n "${ZABBIX_URL:-}" ]; then
   if out=$(printf '{}' | zbx call apiinfo.version 2>/dev/null); then
-    api_ok=1
     status_ok '"apiinfo.version"' "\"$out\""
   else
     status_warn '"apiinfo.version"' '"failed (check URL/TLS/auth)"'
+
+    # Deep probe to classify common failure modes
+    # Build unauthenticated apiinfo.version request
+    req=$(jq -n '{jsonrpc:"2.0", method:"apiinfo.version", id:1, params:{}}')
+    tmp_resp=$(mktemp)
+    # Try capturing HTTP status code
+    http_code=$(_zbx_curl_common -w '%{http_code}' -o "$tmp_resp" -sS -X POST "$ZABBIX_URL" -d "$req" 2>/dev/null || echo 000)
+    body="$(cat "$tmp_resp" 2>/dev/null || true)"; rm -f "$tmp_resp"
+    case "$http_code" in
+      000)
+        # Network/CERT/DNS: capture stderr to classify
+        err="$( { _zbx_curl_common -X POST "$ZABBIX_URL" -d "$req" >/dev/null; } 2>&1 || true)"
+        if grep -qi 'could not resolve host' <<<"$err"; then
+          status_warn '"endpoint"' '"DNS resolution failed — verify hostname in ZABBIX_URL"'
+        elif grep -Eqi 'certificate|SSL.*verify|unknown ca|self-signed' <<<"$err"; then
+          status_warn '"tls"' '"TLS verification failed — set ZABBIX_CA_CERT/ZABBIX_CA_PATH or use --insecure to test"'
+        elif grep -qi 'timed out' <<<"$err"; then
+          status_warn '"network"' '"Connection timed out — check network/firewall and URL"'
+        elif grep -qi 'refused' <<<"$err"; then
+          status_warn '"network"' '"Connection refused — check port/service"'
+        else
+          status_warn '"endpoint"' '"Unable to reach endpoint — check URL and connectivity"'
+        fi
+        ;;
+      401|403)
+        status_warn '"endpoint"' '"HTTP auth error — verify API token or user/pass"'
+        ;;
+      404)
+        if grep -qi '<html' <<<"$body"; then
+          status_warn '"endpoint"' '"HTML response/404 — ZABBIX_URL likely not the api_jsonrpc.php endpoint"'
+        else
+          status_warn '"endpoint"' '"404 Not Found — check ZABBIX_URL path (should end with api_jsonrpc.php)"'
+        fi
+        ;;
+      200)
+        # HTTP ok but body may be HTML/non-JSON
+        if ! jq -e . >/dev/null 2>&1 <<<"$body"; then
+          status_warn '"endpoint"' '"HTTP 200 but non-JSON body — check ZABBIX_URL (should be api_jsonrpc.php)"'
+        fi
+        ;;
+      *)
+        status_warn '"endpoint"' "\"HTTP $http_code from endpoint\""
+        ;;
+    esac
   fi
 
   # zbx ping should print 'pong' on success

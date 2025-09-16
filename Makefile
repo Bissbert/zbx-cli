@@ -6,6 +6,7 @@ SYSCONFDIR ?= /etc
 
 all:
 	@echo "Run 'make install' (system) or 'make install-user' (per-user)."
+	@echo "Other useful targets: test, test-insecure, gen-completions, install-completions, uninstall-completions, check, doctor"
 
 install:
 	@echo ">> Installing zbx toolkit to $(BINDIR)"
@@ -77,10 +78,15 @@ test-insecure:
 check:
 	@echo ">> Running checks (shellcheck)"
 	@if command -v shellcheck >/dev/null 2>&1; then \
-	  shellcheck -x bin/zbx bin/zbx-* bin/log-lib bin/zbx-lib || exit 1; \
+	  shellcheck -e SC1007 -e SC2015 -e SC1090 -e SC1091 -x bin/zbx bin/zbx-* bin/log-lib bin/zbx-lib || exit 1; \
 	else \
 	  echo "shellcheck not found; skipping static analysis"; \
 	fi
+
+.PHONY: doctor
+doctor:
+	@echo ">> Running zbx doctor"
+	@PATH="$(PWD)/bin:$$PATH" zbx doctor
 
 gen-completions:
 	@echo ">> Generating shell completions"

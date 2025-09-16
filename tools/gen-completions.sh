@@ -16,6 +16,7 @@ globals=(--insecure --cacert --capath)
 readarray -t subs < <(PATH="$ROOT_DIR/bin:$PATH" zbx --list | sort)
 
 declare -A opts_map
+declare -A choices_map
 
 for s in "${subs[@]}"; do
   help_out=$(PATH="$ROOT_DIR/bin:$PATH" zbx help "$s" 2>/dev/null || true)
@@ -23,6 +24,7 @@ for s in "${subs[@]}"; do
   block=$(awk '/^Options:/{flag=1;next} /^Notes:|^Entities:|^Details:/{if(flag==1) exit} flag{print}' <<<"$help_out" || true)
   tokens=()
   specs=()
+  choices_specs=()
   if [ -n "$block" ]; then
     # Per-line parsing to create zsh _arguments specs
     while IFS= read -r line; do
@@ -51,6 +53,10 @@ for s in "${subs[@]}"; do
           spec+="}:${arg_name}"
         fi
         specs+=("$spec")
+        # Record choices for bash completion
+        if [[ "$t" == --* ]] && [ -n "$choices" ]; then
+          choices_specs+=("$t:$choices")
+        fi
       done
     done <<<"$block"
   fi
@@ -58,6 +64,7 @@ for s in "${subs[@]}"; do
   tokens+=(--help)
   # Store as space-joined
   opts_map["$s"]="${tokens[*]}"
+  choices_map["$s"]="${choices_specs[*]:-}"
 done
 
 # Bash completion
@@ -73,6 +80,20 @@ _zbx()
   words=("${COMP_WORDS[@]}")
   cword=${COMP_CWORD}
 
+  # Caches for dynamic value completion (persist across invocations)
+  __zbx_get_hosts() {
+    if [[ -z "${__zbx_hosts_cache-}" ]]; then
+      __zbx_hosts_cache=$(zbx hosts-list 2>/dev/null | awk -F$'\t' '{print $2}' | tr '\n' ' ')
+    fi
+    printf '%s' "$__zbx_hosts_cache"
+  }
+  __zbx_get_templates() {
+    if [[ -z "${__zbx_templates_cache-}" ]]; then
+      __zbx_templates_cache=$(zbx template-list 2>/dev/null | awk -F$'\t' '{print $2}' | tr '\n' ' ')
+    fi
+    printf '%s' "$__zbx_templates_cache"
+  }
+
 HB
   printf '  local globals="%s"\n' "${globals[*]}"
   cat <<'HB'
@@ -86,6 +107,20 @@ HB
   fi
 
   local sub="${words[1]}"
+  # Global option value completions
+  if [[ "$prev" == "--cacert" ]]; then
+    COMPREPLY=( $(compgen -f -- "$cur") )
+    return
+  fi
+  if [[ "$prev" == "--capath" ]]; then
+    COMPREPLY=( $(compgen -d -- "$cur") )
+    return
+  fi
+  # Common format value completion
+  if [[ "$prev" == "--format" ]]; then
+    COMPREPLY=( $(compgen -W "tsv csv json" -- "$cur") )
+    return
+  fi
   case "$sub" in
     search)
       # entity at position 2
@@ -93,11 +128,74 @@ HB
         COMPREPLY=( $(compgen -W "hosts hostgroups templates items triggers problems macros" -- "$cur") )
         return
       fi
+      # entity provided: suggest entity-specific options and value completions
+      ent="${words[2]:-}"
+      # Complete hostnames after --host for relevant entities
+      if [[ "$prev" == "--host" ]]; then
+        # Complete hosts from cache
+        local _hosts
+        _hosts=$(__zbx_get_hosts)
+        COMPREPLY=( $(compgen -W "$_hosts" -- "$cur") )
+        return
+      fi
+      # Complete --format option values
+      if [[ "$prev" == "--format" ]]; then
+        COMPREPLY=( $(compgen -W "tsv csv json" -- "$cur") )
+        return
+      fi
+      # Offer entity-specific option words
+      case "$ent" in
+        items)
+          COMPREPLY=( $(compgen -W "--host --key --like --regex --limit --format --headers --json $globals" -- "$cur") )
+          return ;;
+        triggers|macros)
+          COMPREPLY=( $(compgen -W "--host --like --regex --limit --format --headers --json $globals" -- "$cur") )
+          return ;;
+        hosts|hostgroups|templates|problems)
+          COMPREPLY=( $(compgen -W "--like --regex --limit --format --headers --json $globals" -- "$cur") )
+          return ;;
+      esac
+      ;;
+    host-get|host-del|host-enable|host-disable|discovery|macro-get|macro-del|macro-set|item-find|triggers|maint-create)
+      # Complete host argument at position 2
+      if [[ $cword -eq 2 ]]; then
+        local _hosts
+        _hosts=$(__zbx_get_hosts)
+        COMPREPLY=( $(compgen -W "$_hosts" -- "$cur") )
+        return
+      fi
+      ;;
+    template-link|template-unlink)
+      # host at pos 2, template name at pos 3
+      if [[ $cword -eq 2 ]]; then
+        local _hosts
+        _hosts=$(__zbx_get_hosts)
+        COMPREPLY=( $(compgen -W "$_hosts" -- "$cur") )
+        return
+      elif [[ $cword -eq 3 ]]; then
+        local _tpls
+        _tpls=$(__zbx_get_templates)
+        COMPREPLY=( $(compgen -W "$_tpls" -- "$cur") )
+        return
+      fi
       ;;
 HB
   for s in "${subs[@]}"; do
     [ "$s" = "search" ] && continue
     opts=${opts_map[$s]:-}
+    # Subcommand option value completions (choices)
+    ch_line=${choices_map[$s]:-}
+    if [ -n "$ch_line" ]; then
+      printf '    if [[ "$sub" == "%s" ]]; then\n' "$s"
+      printf '      case "$prev" in\n'
+      IFS=$'\n' read -r -d '' -a ch_arr < <(printf '%s\n' "$ch_line" && printf '\0')
+      for spec in "${ch_arr[@]}"; do
+        opt="${spec%%:*}"; vals="${spec#*:}"
+        printf '        %s) COMPREPLY=( $(compgen -W "%s" -- "$cur") ) ; return ;;\n' "$opt" "$vals"
+      done
+      printf '      esac\n'
+      printf '    fi\n'
+    fi
     printf '    %s) COMPREPLY=( $(compgen -W "$globals %s" -- "$cur") ) ;;\n' "$s" "$opts"
   done
   cat <<'HB'

@@ -9,6 +9,7 @@ small scripts, composable, text streams in/out.
 
 * `zbx <subcommand>` style (like `git`).
 * Subcommands for **hosts, templates, macros, problems, triggers, maintenance, items, discovery, inventory**.
+  - Includes `hosts-list` for quick host listing.
 * **`zbx search`** — fuzzy or substring search across hosts, templates, items, triggers, problems, macros.
 * **`zbx config`** — safe management of your `config.sh` (read, set, unset, list, edit).
 * **`zbx doctor`** — environment, dependency, and config checks with suggested fixes.
@@ -205,6 +206,15 @@ What it does:
 - `zbx search <TAB>` → entity names
 - `zbx config <TAB>` → config subcommands
 - Completes options parsed from each subcommand’s help (including global flags)
+ - Suggests values for certain options:
+   - `--format` → `tsv`, `csv`, `json`
+   - `--cacert` (files), `--capath` (directories)
+   - `search --host` completes hostnames; per-entity options are suggested
+   - `host-*`, `macro-*`, `discovery`, `item-find`, `triggers`, `maint-create` complete host argument
+   - `template-link/unlink` complete host (2nd arg) and template (3rd arg)
+
+Caching:
+- Host and template lists are cached within the shell session for snappy completions.
 
 ---
 
@@ -224,3 +234,14 @@ make uninstall-completions
   - Set `ZABBIX_URL` and either `ZABBIX_API_TOKEN` or `ZABBIX_USER`/`ZABBIX_PASS` in your environment or config.
   - They verify `zbx ping`, `zbx version`, and read-only API methods such as `host.get`, `template.get`, `problem.get` with small limits.
   - These tests fail if `ZABBIX_URL` is not set, by design.
+
+---
+
+## Make Targets
+
+- `make install` / `make install-user` — install binaries and config skeleton.
+- `make test` — run unit tests (mocked curl). Use `make test-insecure` to run with TLS disabled (helpful for self-signed envs).
+- `make gen-completions` — generate Bash completions under `completions/`.
+- `make install-completions` / `make uninstall-completions` — install/remove completions to standard locations.
+- `make check` — run `shellcheck` (if available) on `bin/*`.
+- `make doctor` — run `zbx doctor` with local `bin/` on `PATH`.

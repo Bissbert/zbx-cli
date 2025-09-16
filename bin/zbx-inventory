@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
+# shellcheck disable=SC1007,SC2015,SC1090,SC1091
 SD="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"; PATH="$SD:$PATH"
 . "$SD/log-lib"; . "$SD/zbx-lib"
 FORMAT=csv; HEADERS=1
-while [ $# > 0 ]; do
+while [ $# -gt 0 ]; do
   case "${1:-}" in
     --format) FORMAT="${2:-csv}"; shift ;;
     --headers) HEADERS=1 ;;

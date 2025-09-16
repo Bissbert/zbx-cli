@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+# shellcheck disable=SC1007,SC2015,SC1090,SC1091
 
 SD="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"; PATH="$SD:$PATH"
 # shellcheck source=bin/log-lib
@@ -90,13 +91,6 @@ if [ "$LIKE" -eq 1 ]; then
   fi
 fi
 
-# Output encoding setup (for non-JSON formats)
-case "$FORMAT" in
-  tsv) ENC='@tsv'; SEP=$'\t' ;;
-  csv) ENC='@csv'; SEP=',' ;;
-  json) : ;; # handled per-entity
-  *) log_error "Unknown format: $FORMAT"; exit 2 ;;
-esac
 
 # If regex mode is active, validate the pattern early and hint on glob usage
 if [ "$REGEX" -eq 1 ]; then
@@ -128,7 +122,7 @@ case "$entity" in
 
     res="$(printf '%s' "$req" | zbx_call host.get)"
     if [ "$FORMAT" = "json" ]; then jq '.result' <<<"$res"; exit 0; fi
-    headers='["hostid","host","name"]'
+    headers_json='["hostid","host","name"]'
     if [ "$LIKE" -eq 1 ]; then
       rows="$(jq -c '.result | map([.hostid, .host, .name])' <<<"$res")"
     else
@@ -137,7 +131,7 @@ case "$entity" in
         | map([.hostid,.host,.name])
       ' <<<"$res")"
     fi
-    zbx_format_rows "$FORMAT" "$headers" "$rows" "$HEADERS"
+    zbx_format_rows "$FORMAT" "$headers_json" "$rows" "$HEADERS"
   ;;
 
   hostgroups)
@@ -148,13 +142,13 @@ case "$entity" in
     fi
     res="$(printf '%s' "$req" | zbx_call hostgroup.get)"
     if [ "$FORMAT" = "json" ]; then jq '.result' <<<"$res"; exit 0; fi
-    headers='["groupid","name"]'
+    headers_json='["groupid","name"]'
     if [ "$LIKE" -eq 1 ]; then
       rows="$(jq -c '.result | map([.groupid, .name])' <<<"$res")"
     else
       rows="$(jq -c --arg re "$pattern" '.result | map(select((.name // "") | test($re; "i"))) | map([.groupid,.name])' <<<"$res")"
     fi
-    zbx_format_rows "$FORMAT" "$headers" "$rows" "$HEADERS"
+    zbx_format_rows "$FORMAT" "$headers_json" "$rows" "$HEADERS"
   ;;
 
   templates)
@@ -165,13 +159,13 @@ case "$entity" in
     fi
     res="$(printf '%s' "$req" | zbx_call template.get)"
     if [ "$FORMAT" = "json" ]; then jq '.result' <<<"$res"; exit 0; fi
-    headers='["templateid","name"]'
+    headers_json='["templateid","name"]'
     if [ "$LIKE" -eq 1 ]; then
       rows="$(jq -c '.result | map([.templateid, .name])' <<<"$res")"
     else
       rows="$(jq -c --arg re "$pattern" '.result | map(select((.name // "") | test($re; "i"))) | map([.templateid,.name])' <<<"$res")"
     fi
-    zbx_format_rows "$FORMAT" "$headers" "$rows" "$HEADERS"
+    zbx_format_rows "$FORMAT" "$headers_json" "$rows" "$HEADERS"
   ;;
 
   items)
@@ -189,13 +183,13 @@ case "$entity" in
 
     res="$(printf '%s' "$req" | zbx_call item.get)"
     if [ "$FORMAT" = "json" ]; then jq '.result' <<<"$res"; exit 0; fi
-    headers='["itemid","hostid","key_","name"]'
+    headers_json='["itemid","hostid","key_","name"]'
     if [ "$LIKE" -eq 1 ]; then
       rows="$(jq -c '.result | map([.itemid, .hostid, .key_, .name])' <<<"$res")"
     else
       rows="$(jq -c --arg re "$pattern" --arg field "$field" '.result | map(select((.[ $field ] // "") | test($re; "i"))) | map([.itemid,.hostid,.key_,.name])' <<<"$res")"
     fi
-    zbx_format_rows "$FORMAT" "$headers" "$rows" "$HEADERS"
+    zbx_format_rows "$FORMAT" "$headers_json" "$rows" "$HEADERS"
   ;;
 
   triggers)
@@ -211,13 +205,13 @@ case "$entity" in
 
     res="$(printf '%s' "$req" | zbx_call trigger.get)"
     if [ "$FORMAT" = "json" ]; then jq '.result' <<<"$res"; exit 0; fi
-    headers='["triggerid","hostid","priority","status","description"]'
+    headers_json='["triggerid","hostid","priority","status","description"]'
     if [ "$LIKE" -eq 1 ]; then
       rows="$(jq -c '.result | map([.triggerid, .hostid, .priority, .status, .description])' <<<"$res")"
     else
       rows="$(jq -c --arg re "$pattern" '.result | map(select((.description // "") | test($re; "i"))) | map([.triggerid,.hostid,.priority,.status,.description])' <<<"$res")"
     fi
-    zbx_format_rows "$FORMAT" "$headers" "$rows" "$HEADERS"
+    zbx_format_rows "$FORMAT" "$headers_json" "$rows" "$HEADERS"
   ;;
 
   problems)
@@ -229,13 +223,13 @@ case "$entity" in
     fi
     res="$(printf '%s' "$req" | zbx_call problem.get)"
     if [ "$FORMAT" = "json" ]; then jq '.result' <<<"$res"; exit 0; fi
-    headers='["eventid","name","severity","acknowledged","clock"]'
+    headers_json='["eventid","name","severity","acknowledged","clock"]'
     if [ "$LIKE" -eq 1 ]; then
       rows="$(jq -c '.result | map([.eventid,.name,.severity,.acknowledged,.clock])' <<<"$res")"
     else
       rows="$(jq -c --arg re "$pattern" '.result | map(select((.name // "") | test($re; "i"))) | map([.eventid,.name,.severity,.acknowledged,.clock])' <<<"$res")"
     fi
-    zbx_format_rows "$FORMAT" "$headers" "$rows" "$HEADERS"
+    zbx_format_rows "$FORMAT" "$headers_json" "$rows" "$HEADERS"
   ;;
 
   macros)
@@ -243,13 +237,13 @@ case "$entity" in
     req="$(jq -n --arg hid "$HOSTID" '{hostids:[$hid]}' )"
     res="$(printf '%s' "$req" | zbx_call usermacro.get)"
     if [ "$FORMAT" = "json" ]; then jq '.result' <<<"$res"; exit 0; fi
-    headers='["macro","value"]'
+    headers_json='["macro","value"]'
     if [ "$LIKE" -eq 1 ]; then
       rows="$(jq -c --arg p "$like_pat" '.result | map(select((.macro // "") | contains($p) or (.value // "") | contains($p))) | map([.macro,.value])' <<<"$res")"
     else
       rows="$(jq -c --arg re "$pattern" '.result | map(select((.macro // "") | test($re; "i") or (.value // "") | test($re; "i"))) | map([.macro,.value])' <<<"$res")"
     fi
-    zbx_format_rows "$FORMAT" "$headers" "$rows" "$HEADERS"
+    zbx_format_rows "$FORMAT" "$headers_json" "$rows" "$HEADERS"
   ;;
 
   *)

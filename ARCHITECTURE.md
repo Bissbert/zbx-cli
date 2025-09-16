@@ -17,6 +17,8 @@ This document describes the overall architecture of the zbx toolkit, its runtime
   - Help system groups commands by area (Hosts, Templates, Macros, Problems & Triggers, Maintenance, Items/History/Trends, Discovery & Inventory, Search, Config, Low‑level, Other).
   - Extracts a one‑line description from each subcommand’s `-h/--help` output when available; falls back to a built‑in description map.
   - Utility flags: `zbx help`, `zbx help <cmd>`, `zbx --list`, `zbx --where <cmd>`.
+  - Global flags (`--insecure`, `--cacert`, `--capath`) are parsed from anywhere on the CLI (before/after the subcommand) and applied prior to dispatch.
+  - Unknown commands produce a concise error and advise `zbx help` (no “closest matches” banner).
 
 - `bin/zbx-lib` (core library)
   - Config discovery (see Configuration) and sourcing of the active config file.
@@ -38,7 +40,7 @@ This document describes the overall architecture of the zbx toolkit, its runtime
 
 - Subcommands (`bin/zbx-*`)
   - Small Bash scripts that source `log-lib` and `zbx-lib`, build a request object with `jq -n`, call `zbx_call <api.method>`, and post‑process with `jq`.
-  - Typical outputs are TSV for consumption by `awk`, `cut`, `grep`, etc.
+  - Typical outputs are TSV/CSV/JSON; many list/search commands support `--format {tsv|csv|json}` and `--headers` and rely on a shared formatter in `zbx-lib`.
   - Examples:
     - Hosts: `zbx-hosts-list`, `zbx-host-get`, `zbx-host-create`, `zbx-host-enable`, `zbx-host-disable`, `zbx-host-del`, `zbx-host-groups`.
     - Templates: `zbx-template-list`, `zbx-template-link`, `zbx-template-unlink`.
@@ -99,9 +101,9 @@ Variables of interest:
 
 - `make install` installs dispatcher, `zbx-*` scripts, and libraries to `${PREFIX:-/usr/local}/bin` and ensures `/etc/zbx/config.sh` exists.
 - `make install-user` installs to `~/.local/bin` and ensures `~/.config/zbx/config.sh` exists; appends PATH helper to common shell RCs.
+- `make gen-completions` generates Bash completions under `completions/`; `make install-completions` installs them to standard system/user paths.
+- `make check` runs ShellCheck (when available); `make doctor` runs `zbx doctor` with local `bin/` on `PATH`.
 
-## Notable Gaps (as of this repo snapshot)
+## Notable Notes
 
-- `Makefile` and help text reference a `zbx-call` low‑level tool and an `zbx-ack` command that are not present in `bin/`.
-- README documents shell completions, but completion files are not included in the repository.
-
+- Integration tests require `ZABBIX_URL` and auth set to pass; they are intentionally failing otherwise.

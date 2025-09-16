@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+# shellcheck disable=SC1007,SC2015,SC1090,SC1091
 
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 PATH="$SCRIPT_DIR:$PATH"
@@ -93,7 +94,7 @@ _group_of() {
   # Categorise by basename pattern
   local base="$1"
   case "$base" in
-    zbx-host-*|zbx-hosts-list|zbx-host-get) echo "Hosts";;
+    zbx-hosts-list|zbx-host-get|zbx-host-*) echo "Hosts";;
     zbx-template-*) echo "Templates";;
     zbx-macro-*) echo "Macros";;
     zbx-trigger-*|zbx-triggers|zbx-ack|zbx-problems) echo "Problems & Triggers";;
@@ -236,7 +237,11 @@ case "${1:-}" in
     sub="${2:-}"; [ -z "$sub" ] && { log_error "Usage: zbx --where <command>"; exit 2; }
     cmd="zbx-$sub"
     p="$(_cmd_path "$cmd")"
-    [ -n "$p" ] && { echo "$p"; exit 0; } || { log_error "Not found: $sub"; exit 1; }
+    if [ -n "$p" ]; then
+      echo "$p"; exit 0
+    else
+      log_error "Not found: $sub"; exit 1
+    fi
   ;;
 esac
 

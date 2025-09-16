@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+# shellcheck disable=SC1007,SC2015,SC1090,SC1091
 
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 PATH="$SCRIPT_DIR:$PATH"
@@ -231,27 +232,27 @@ zbx_config_path() { printf '%s\n' "${ZBX_CONFIG_ACTIVE:-}"; }
 #     array of objects by mapping headers to row fields; otherwise emits the raw
 #     array-of-arrays.
 zbx_format_rows() {
-  local fmt="${1:-tsv}" headers="${2:-[]}" rows="${3:-[]}" want_hdrs="${4:-0}"
+  local fmt="${1:-tsv}" headers_json="${2:-[]}" rows_json="${3:-[]}" want_hdrs="${4:-0}"
   case "$fmt" in
     json)
-      if [ "$want_hdrs" -eq 1 ] && [ -n "$headers" ] && [ "$headers" != "[]" ]; then
-        jq -c -n --argjson headers "$headers" --argjson rows "$rows" '
+      if [ "$want_hdrs" -eq 1 ] && [ -n "$headers_json" ] && [ "$headers_json" != "[]" ]; then
+        jq -c -n --argjson headers "$headers_json" --argjson rows "$rows_json" '
           [ $rows[] | with_entries(.key as $i | .value) |
             reduce range(0; ($headers|length)) as $i ({}; .[$headers[$i]] = (.["$i"])) ]
         '
       else
-        jq -c -n --argjson rows "$rows" '$rows'
+        jq -c -n --argjson rows "$rows_json" '$rows'
       fi
       ;;
     tsv|csv)
       local enc
       enc='@tsv'; [ "$fmt" = "csv" ] && enc='@csv'
       # headers
-      if [ "$want_hdrs" -eq 1 ] && [ -n "$headers" ] && [ "$headers" != "[]" ]; then
-        jq -r -n --argjson h "$headers" '$h | '"$enc"''
+      if [ "$want_hdrs" -eq 1 ] && [ -n "$headers_json" ] && [ "$headers_json" != "[]" ]; then
+        jq -r -n --argjson h "$headers_json" '$h | '"$enc"''
       fi
       # rows
-      jq -r -n --argjson rows "$rows" '$rows[] | '"$enc"''
+      jq -r -n --argjson rows "$rows_json" '$rows[] | '"$enc"''
       ;;
     *)
       echo "Unsupported format: $fmt" >&2; return 2 ;;

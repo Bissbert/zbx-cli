@@ -1,247 +1,165 @@
-# Zabbix Toolkit (`zbx`)
+# Zabbix CLI (`zbx`)
 
-A **git-style CLI toolkit** for [Zabbix](https://www.zabbix.com/) built around the Unix philosophy:
-small scripts, composable, text streams in/out.
+`zbx` is a pure-shell client for the Zabbix JSON-RPC API: one dispatcher,
+small `zbx-*` commands, `curl` for transport, and `jq` for request and output
+shaping. It is useful when a host already has Bash, `curl`, and `jq`, and the
+desired workflow is to compose TSV, CSV, or JSON with ordinary Unix tools.
 
----
+```mermaid
+sequenceDiagram
+    participant S as Shell
+    participant Z as zbx command
+    participant L as zbx-lib
+    participant A as Zabbix JSON-RPC API
+    participant J as jq / formatter
 
-## Features
+    S->>Z: zbx hosts-list
+    Z->>L: build host.get params
+    alt API token configured
+        L->>A: POST with Bearer header
+    else user + password
+        L->>A: user.login
+        A-->>L: session token
+        L->>L: cache token + timestamp
+        L->>A: POST with auth field
+    end
+    A-->>L: JSON-RPC response
+    L->>J: select .result fields
+    J-->>S: TSV / CSV / JSON
 
-* `zbx <subcommand>` style (like `git`).
-* Subcommands for **hosts, templates, macros, problems, triggers, maintenance, items, discovery, inventory**.
-  - Includes `hosts-list` for quick host listing.
-* **`zbx search`** — fuzzy or substring search across hosts, templates, items, triggers, problems, macros.
-* **`zbx config`** — safe management of your `config.sh` (read, set, unset, list, edit).
-* **`zbx doctor`** — environment, dependency, and config checks with suggested fixes.
-* Pluggable: just drop new `zbx-*` scripts into `$PATH`.
-* Outputs **TSV/CSV/JSON** → easy to pipe into `jq`, `awk`, `grep`, `cut`, etc.
-* **Bash completion** available (auto‑generated).
-
----
-
-## Requirements
-
-* **bash**, **curl**, **jq**
-* Optional: **bash-completion** for shell completions
-
----
-
-## Installation
-
-System-wide (default prefix `/usr/local`):
-
-```bash
-make install        # installs binaries + config skeleton + completions
+    style Z fill:#1f6feb,stroke:#58a6ff,color:#fff
+    style L fill:#8250df,stroke:#bc8cff,color:#fff
+    style A fill:#238636,stroke:#3fb950,color:#fff
+    style J fill:#238636,stroke:#3fb950,color:#fff
 ```
 
-Per-user (no root):
+## Quick start
 
-```bash
-make install-user   # installs into ~/.local/bin and ~/.config/zbx/config.sh
-```
+Requirements: a modern Bash, `curl`, and `jq`. Install the scripts for the
+current user, then configure either a Zabbix API token or user/password
+credentials:
 
----
+```sh
+make install-user
 
-## Quickstart
+export ZABBIX_API_TOKEN='replace-with-your-api-token'
+zbx config init --scope user
+zbx config set ZABBIX_URL \
+  https://zabbix.example.com/api_jsonrpc.php --scope user
+zbx config set ZABBIX_API_TOKEN "$ZABBIX_API_TOKEN" --scope user
 
-```bash
-# 1. Initialise your config (user scope by default)
-zbx config init
-
-# 2. Set your Zabbix URL and credentials
-zbx config set ZABBIX_URL https://zabbix.example.com/api_jsonrpc.php
-zbx config set ZABBIX_USER apiuser
-zbx config set ZABBIX_PASS secret123
-
-# 3. Verify connectivity
-zbx ping          # should print "pong"
-zbx version       # prints API + user info
-
-# 4. List hosts and search
-zbx hosts-list
-zbx search hosts web
-
-# 5. Add a macro to a host
-zbx macro-set web01 {ENV} prod
-
-# 6. Acknowledge a problem
-zbx problems | head -n1
-zbx ack 12345 "Investigating issue"
-```
-
-Within 3 minutes, you’re connected to your Zabbix API and running useful commands.
-
----
-
-## TLS / Certificates
-
-By default TLS verification is enabled. You can control it via config or flags:
-
-- Runtime flags on `zbx` (affect the invoked subcommand only):
-  - `--insecure` — disable TLS verification for this run (curl `--insecure`).
-  - `--cacert /path/ca.pem` — use a custom CA certificate file.
-  - `--capath /path/to/ca-dir` — use a directory of CA certificates.
-
-  These flags can appear anywhere on the command line, e.g. `zbx version --insecure` or `zbx --insecure version`.
-
-- Persistent config (managed with `zbx config`):
-  - `ZABBIX_VERIFY_TLS=0|1` (default 1)
-  - `ZABBIX_CA_CERT=/path/ca.pem` (optional)
-  - `ZABBIX_CA_PATH=/path/to/ca-dir` (optional)
-
-Examples:
-
-```
-zbx --insecure ping
-zbx --cacert ~/.config/zbx/my-ca.pem version
-zbx config set ZABBIX_CA_CERT ~/.config/zbx/my-ca.pem
-```
-
----
-
-## Session Token Cache
-
-zbx stores the session token in your user state directory by default:
-
-- Default path: `${XDG_STATE_HOME:-$HOME/.local/state}/zbx/session.token`
-- Override with `ZABBIX_TOKEN_FILE` via `zbx config set ZABBIX_TOKEN_FILE /custom/path`.
-- Lifespan: session tokens obtained via user+password are treated as valid for 30 minutes; after that, `zbx` re‑authenticates automatically.
-
-Backward compatibility: if no token is found at the default path and no explicit path is configured, `zbx` also checks for the legacy `./.zabbix_session.token` when reading. New tokens are written to the state path. Legacy plain tokens are treated as expired to enforce the 30‑minute lifetime.
-
-API Token mode: when `ZABBIX_API_TOKEN` is provided in config or environment, it is used directly (Authorization: Bearer) and no session token file is read or written.
-
----
-
-## Cheatsheet
-
-| Command                                                              | Description                                                                   |
-| -------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
-| **Core / Health**                                                    |                                                                               |
-| `zbx ping`                                                           | Check API is alive (returns `pong`)                                           |
-| `zbx version`                                                        | Show API version and current user                                             |
-| `zbx doctor [--fix] [--yes]`                                         | Diagnose dependencies, config, connectivity (optionally apply fixes)          |
-| **Hosts**                                                            |                                                                               |
-| `zbx hosts-list`                                                     | List all hosts (id + name)                                                    |
-| `zbx host-get <host>`                                                | Show details for a host                                                       |
-| `zbx host-create <host> <ip> [group]`                                | Create a new host in a group                                                  |
-| `zbx host-enable <host>`                                             | Enable a host                                                                 |
-| `zbx host-disable <host>`                                            | Disable a host                                                                |
-| `zbx host-del <host>`                                                | Delete a host                                                                 |
-| `zbx host-groups`                                                    | List all host groups                                                          |
-| **Templates**                                                        |                                                                               |
-| `zbx template-list`                                                  | List all templates                                                            |
-| `zbx template-link <host> <template>`                                | Link a template to a host                                                     |
-| `zbx template-unlink <host> <template>`                              | Unlink a template from a host                                                 |
-| **Macros**                                                           |                                                                               |
-| `zbx macro-get <host>`                                               | List macros for a host                                                        |
-| `zbx macro-set <host> {MACRO} <value>`                               | Set a macro                                                                   |
-| `zbx macro-del <host> {MACRO}`                                       | Delete a macro                                                                |
-| `zbx macro-bulk-set` (from TSV)                                      | Bulk set macros (`host<TAB>{MACRO}<TAB>value`)                                |
-| **Problems & Triggers**                                              |                                                                               |
-| `zbx problems`                                                       | List current problems (eventid, name, severity)                               |
-| `zbx ack <eventid> [msg]`                                            | Acknowledge a problem                                                         |
-| `zbx triggers <host>`                                                | List triggers for a host                                                      |
-| `zbx trigger-enable <id>`                                            | Enable a trigger                                                              |
-| `zbx trigger-disable <id>`                                           | Disable a trigger                                                             |
-| **Maintenance**                                                      |                                                                               |
-| `zbx maint-create <name> <host> <since> <until>`                     | Create maintenance window (epoch times)                                       |
-| `zbx maint-list`                                                     | List maintenance periods                                                      |
-| `zbx maint-del <id>`                                                 | Delete a maintenance window                                                   |
-| **Items, History & Trends**                                          |                                                                               |
-| `zbx item-find <host> <key>`                                         | Find items by name or key                                                     |
-| `zbx history <itemid> <since> <until>`                               | Get item history                                                              |
-| `zbx trends <itemid> <since> <until>`                                | Get item trends                                                               |
-| **Discovery & Inventory**                                            |                                                                               |
-| `zbx discovery <host>`                                               | Show LLD discovery items                                                      |
-| `zbx inventory`                                                      | Export inventory (CSV)                                                        |
-| **Search**                                                           |                                                                               |
-| `zbx search <entity> <pattern> [opts]`                               | Search across `hosts`, `templates`, `items`, `triggers`, `problems`, `macros` |
-| Options: `--host`, `--like`, `--regex`, `--key`, `--limit`, `--format {tsv|csv|json}`, `--headers`, `--json` | |
-| **Config**                                                           |                                                                               |
-| `zbx config list`                                                    | List effective config (secrets redacted)                                      |
-| `zbx config get VAR [--raw]`                                         | Get a config value                                                            |
-| `zbx config set VAR VALUE [--scope]`                                 | Set a config override                                                         |
-| `zbx config unset VAR [--scope]`                                     | Remove override                                                               |
-| `zbx config edit`                                                    | Edit config in `$EDITOR`                                                      |
-| `zbx config path`                                                    | Show active config path                                                       |
-| `zbx config init [--scope]`                                          | Create config file & override block                                           |
-
----
-
-## Output Formatting
-
-Many list/search commands support flexible output:
-
-- `--format {tsv|csv|json}` — choose output format (default varies by command; typically TSV or CSV)
-- `--headers` — include header row for TSV/CSV outputs
-- `--json` — alias for `--format json`
-
-Examples:
-
-```
+zbx doctor
+zbx ping
+zbx hosts-list --headers
 zbx search hosts web --format csv --headers
-zbx template-list --format json | jq '.[].name'
-zbx problems --format tsv --headers | column -t -s $'\t'
 ```
 
-Note: JSON output returns API result arrays suitable for piping into `jq`.
+The install and config commands were checked in a temporary local install
+prefix. The commands that contact `zabbix.example.com` require your real
+endpoint and credentials; no live Zabbix endpoint was available for this pass,
+so `doctor`, `ping`, and the data commands were not verified against a server.
+For session authentication, set `ZABBIX_USER` and `ZABBIX_PASS` instead of
+`ZABBIX_API_TOKEN`. See [configuration and authentication](docs/configuration.md)
+for the full variable table.
 
----
+## Architecture
 
-## Completions (Bash)
+```mermaid
+flowchart TD
+    A["zbx <command>"] --> B["bin/zbx<br/>discover + dispatch"]
+    B --> C["bin/zbx-*<br/>small Bash command"]
+    C --> D["bin/zbx-lib<br/>config + auth + JSON-RPC"]
+    D --> E["curl<br/>HTTP + TLS"]
+    E --> F["Zabbix API"]
+    F --> D
+    D --> G["jq<br/>parse + format"]
+    G --> H["stdout / stderr"]
 
-Generated from the CLI automatically.
-
-- Generate: `make gen-completions`
-- Install: `make install-completions` (creates if missing, installs system- or user-scoped)
-
-Install locations (Bash):
-- System: `/usr/share/bash-completion/completions/zbx` (preferred) or `/etc/bash_completion.d/zbx`
-- User: `~/.local/share/bash-completion/completions/zbx`
-
-What it does:
-
-- `zbx <TAB>` → all subcommands
-- `zbx search <TAB>` → entity names
-- `zbx config <TAB>` → config subcommands
-- Completes options parsed from each subcommand’s help (including global flags)
- - Suggests values for certain options:
-   - `--format` → `tsv`, `csv`, `json`
-   - `--cacert` (files), `--capath` (directories)
-   - `search --host` completes hostnames; per-entity options are suggested
-   - `host-*`, `macro-*`, `discovery`, `item-find`, `triggers`, `maint-create` complete host argument
-   - `template-link/unlink` complete host (2nd arg) and template (3rd arg)
-
-Caching:
-- Host and template lists are cached within the shell session for snappy completions.
-
----
-
-## Uninstall
-
-```bash
-make uninstall
-make uninstall-completions
+    style B fill:#1f6feb,stroke:#58a6ff,color:#fff
+    style D fill:#8250df,stroke:#bc8cff,color:#fff
+    style F fill:#238636,stroke:#3fb950,color:#fff
+    style H fill:#238636,stroke:#3fb950,color:#fff
 ```
 
----
+`bin/zbx` recognizes executable `zbx-*` commands on `PATH`. The subcommands
+source the shared libraries, make a JSON request with `jq`, call the endpoint,
+and select output fields. The dispatcher also handles `--insecure`, `--cacert`,
+and `--capath` before dispatching.
 
-## Tests
+## Capabilities
 
-- Unit tests with a mock curl run by default: `make test`.
-- Integration tests require a real Zabbix endpoint and run read-only calls (no modifications):
-  - Set `ZABBIX_URL` and either `ZABBIX_API_TOKEN` or `ZABBIX_USER`/`ZABBIX_PASS` in your environment or config.
-  - They verify `zbx ping`, `zbx version`, and read-only API methods such as `host.get`, `template.get`, `problem.get` with small limits.
-  - These tests fail if `ZABBIX_URL` is not set, by design.
+| Area | Representative commands | API work | Typical output |
+|---|---|---|---|
+| Hosts | `hosts-list`, `host-get`, `host-create`, `host-enable`, `host-del` | Read and mutate hosts, interfaces, groups, and status. | TSV or JSON |
+| Templates | `template-list`, `template-link`, `template-unlink` | List and link or unlink templates. | TSV or JSON |
+| Macros | `macro-get`, `macro-set`, `macro-bulk-set`, `macro-del` | Read and update host user macros. | TSV or JSON |
+| Problems and triggers | `problems`, `ack`, `triggers`, `trigger-enable` | Inspect current problems and change acknowledgement or trigger status. | TSV or JSON |
+| Maintenance | `maint-list`, `maint-create`, `maint-del` | Read, create, and delete maintenance windows. | TSV or JSON |
+| History and inventory | `item-find`, `history`, `trends`, `discovery`, `inventory` | Query item data, discovery items, and host inventory. | TSV, CSV, or JSON |
+| Search | `search` | Search hosts, groups, templates, items, triggers, problems, or macros. | TSV, CSV, or JSON |
+| Health and auth | `doctor`, `login`, `ping`, `version` | Check local prerequisites, authenticate, and inspect API/user identity. | Text or JSON |
+| Extensibility | `call` | Send arbitrary JSON-RPC params and optionally apply a `jq` filter. | API result or raw JSON |
 
----
+The complete source-derived command surface is in
+[`docs/commands.md`](docs/commands.md). It is regenerated by
+[`devtools/generate-command-table.sh`](devtools/generate-command-table.sh).
 
-## Make Targets
+## Measured results
 
-- `make install` / `make install-user` — install binaries and config skeleton.
-- `make test` — run unit tests (mocked curl). Use `make test-insecure` to run with TLS disabled (helpful for self-signed envs).
-- `make gen-completions` — generate Bash completions under `completions/`.
-- `make install-completions` / `make uninstall-completions` — install/remove completions to standard locations.
-- `make check` — run `shellcheck` (if available) on `bin/*`.
-- `make doctor` — run `zbx doctor` with local `bin/` on `PATH`.
+These are local repository measurements from
+[`devtools/measure.sh`](devtools/measure.sh), not API benchmarks:
+
+| Measurement | Result |
+|---|---:|
+| User-facing command source files | 34 |
+| Bytes in those command files | 59,733 |
+| Lines in those command files | 1,754 |
+| Bytes in all `bin/*` files | 79,036 |
+| Shell test files | 12 |
+| Live Zabbix request benchmark | not measured |
+
+The integration tests intentionally require a configured, reachable endpoint.
+No network timing or API-version compatibility number is published without one.
+The measurement method and provenance are documented in
+[`docs/measurement.md`](docs/measurement.md).
+
+## Repository layout
+
+| Path | Purpose |
+|---|---|
+| `bin/zbx` | Dispatcher, help system, and global TLS flags. |
+| `bin/zbx-*` | User-facing subcommands plus the sourced libraries. |
+| `Makefile` | System/user installation, tests, checks, and completions. |
+| `tests/` | Mock-based unit tests and opt-in read-only integration tests. |
+| `tools/` | Repository-maintained completion generation. |
+| `devtools/` | Command-table generation and measurements created for this pass. |
+| `docs/` | Architecture, command surface, configuration, failures, and provenance. |
+| `ARCHITECTURE.md` | Existing prose architecture reference. |
+| `OPTIMISATIONS.md` | Existing implementation notes. |
+
+Start with the [documentation index](docs/README.md).
+
+## Known limitations
+
+- The client does not enforce a supported Zabbix API-version range. `ping`
+  checks the call path, while `version` prints the API's returned value.
+- With API-token authentication, a JSON-RPC error is currently treated as a
+  successful JSON response by `zbx_call`; `ping` can print `pong` for such an
+  error and `version` can print null fields.
+- `zbx doctor` can display `HTTP 000000` for an unreachable endpoint because
+  its unavailable-status fallback is appended twice.
+- The dispatcher lists the installed internal `zbx-lib` helper as `lib`, and
+  the dispatcher needs a modern Bash for its associative-array and mapfile
+  features.
+- The tracked mock `curl` used by the shell tests is not executable in a raw
+  checkout, so mock tests can fall through to the real network command.
+- Commands that need a server cannot be fully verified without a real Zabbix
+  endpoint and credentials or an API token. The integration tests fail early
+  when `ZABBIX_URL` is absent by design.
+- Configuration files are sourced as shell code. Keep them private and use the
+  redacted `zbx config list`/`get` views when sharing diagnostics.
+- `--insecure` disables TLS verification for the invoked run. Prefer a trusted
+  CA or `ZABBIX_CA_CERT`/`ZABBIX_CA_PATH` for normal operation.
+- The tracked source scripts are installed with executable permissions by the
+  Makefile; when using the checkout directly, invoke the dispatcher as `bash
+  bin/zbx ...` unless the files have been made executable locally.

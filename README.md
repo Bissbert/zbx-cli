@@ -26,11 +26,6 @@ sequenceDiagram
     A-->>L: JSON-RPC response
     L->>J: select .result fields
     J-->>S: TSV / CSV / JSON
-
-    style Z fill:#1f6feb,stroke:#58a6ff,color:#fff
-    style L fill:#8250df,stroke:#bc8cff,color:#fff
-    style A fill:#238636,stroke:#3fb950,color:#fff
-    style J fill:#238636,stroke:#3fb950,color:#fff
 ```
 
 ## Quick start

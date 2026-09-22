@@ -204,8 +204,7 @@ zbx_call() {
     printf '%s' "$resp"
     return 1
   fi
-  if [ -n "${ZABBIX_API_TOKEN:-}" ]; then printf '%s' "$resp"; return 0; fi
-  if jq -e '.error.message? | test("Session terminated|Not authorised"; "i")' >/dev/null 2>&1 <<<"$resp"; then
+  if [ -z "${ZABBIX_API_TOKEN:-}" ] && jq -e '.error.message? | test("Session terminated|Not authorised"; "i")' >/dev/null 2>&1 <<<"$resp"; then
     log_warn "Session terminated; re-login and retry once"
     zbx_login
     resp=$(printf '%s' "$input" | zbx_call_raw "$method")
@@ -214,6 +213,8 @@ zbx_call() {
   if jq -e '.error? // empty' >/dev/null 2>&1 <<<"$resp"; then
     log_error "API error: $(jq -c '.error' <<<"$resp")"
     log_info "Run 'zbx doctor' to diagnose common issues."
+    printf '%s' "$resp"
+    return 1
   fi
   printf '%s' "$resp"
 }

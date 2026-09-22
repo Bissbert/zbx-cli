@@ -7,6 +7,8 @@ ROOT="$PWD"
 export PATH="$ROOT/tests/mock-bin:$ROOT/bin:$PATH"
 export ZABBIX_API_TOKEN="dummy"
 
+assert_eq "$ROOT/tests/mock-bin/curl" "$(command -v curl)" "doctor uses mock curl"
+
 out="" err="" code=0
 run_cmd out err code "$ROOT/bin/zbx" doctor
 assert_eq 0 "$code" "doctor exit"
@@ -18,4 +20,3 @@ assert_contains "$out" "version" "doctor includes version"
 assert_contains "$out" "api.version:" "doctor version shows api.version"
 
 echo "OK doctor"
-

@@ -181,7 +181,8 @@ if command -v curl >/dev/null 2>&1 && command -v jq >/dev/null 2>&1 && [ -n "${Z
     req=$(jq -n '{jsonrpc:"2.0", method:"apiinfo.version", id:1, params:{}}')
     tmp_resp=$(mktemp)
     # Try capturing HTTP status code
-    http_code=$(_zbx_curl_common -w '%{http_code}' -o "$tmp_resp" -sS -X POST "$ZABBIX_URL" -d "$req" 2>/dev/null || echo 000)
+    http_code=$(_zbx_curl_common -w '%{http_code}' -o "$tmp_resp" -sS -X POST "$ZABBIX_URL" -d "$req" 2>/dev/null || true)
+    [ -n "$http_code" ] || http_code=000
     body="$(cat "$tmp_resp" 2>/dev/null || true)"; rm -f "$tmp_resp"
     case "$http_code" in
       000)

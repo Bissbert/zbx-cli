@@ -12,7 +12,7 @@ command_lines=1755
 bin_bytes=79103
 bin_lines=2351
 test_files=18
-readme_bytes=9386
+readme_bytes=9401
 readme_lines=205
 
 === command table matches docs/commands.md
@@ -21,7 +21,7 @@ generated table rows: 36, missing from docs/commands.md: 0
 === file modes as committed
 100755 38 files, e.g. bin/log-lib
 
-=== bug 6: bash bin/zbx from the clone (committed modes)
+=== bash bin/zbx from the clone (committed modes, #4)
 --list lines: 34
 bash bin/zbx config --help exit=0
 
@@ -47,29 +47,29 @@ PASS tests/test_write_commands.sh
 Summary: 16 passed, 0 failed, 2 skipped
 exit=0
 
-=== bug 7: tests start no login shells
+=== tests start no login shells (#5)
 login-shell invocations in tests/: 0
 
-=== bug 8: zbx login in session mode
+=== zbx login in session mode (#6)
 exit=0 stdout=[ok]
 cached token: sess-0123
 
-=== bug 1: installed zbx --list
+=== installed zbx --list
 install exit=0
 list exit=0
 commands listed: 34, lib listed: 0
 
-=== bug 3: mock curl resolves first
+=== mock curl resolves first
 -rwxr-xr-x tests/mock-bin/curl
 /tmp/zbx/tests/mock-bin/curl
 
-=== bug 4: JSON-RPC error in API-token mode
+=== JSON-RPC error in API-token mode
 zbx-ping exit=1 stdout=[]
 API error: {"code":-32600,"message":"unsupported API version"}
 zbx-version exit=1 stdout=[api.version: null ]
 API error: {"code":-32600,"message":"unsupported API version"}
 
-=== bug 5: doctor against a closed port
+=== doctor against a closed port
 exit=0
  - apiinfo.version [warn] failed (check URL/TLS/auth)
  - endpoint     [warn] Unable to reach endpoint — check URL and connectivity

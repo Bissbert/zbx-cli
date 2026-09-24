@@ -2,10 +2,12 @@
 
 [← back to the overview](../README.md)
 
-Each entry below was reproduced and reviewed. Four were fixed on `main`, and
-one was rejected as a documented requirement. Two more turned up when
-everything was re-run in a Linux container (see
-[measurement and provenance](measurement.md)); they are still open.
+Each entry below was reproduced and reviewed. Seven are fixed, and one was
+rejected as a documented requirement. Entries 6 and 7 turned up when everything
+was re-run in a Linux container (see
+[measurement and provenance](measurement.md)), and entry 8 was found by the
+session-mode test added with those fixes. Entries 6 to 8 each have a
+regression test under [`tests/`](../tests).
 
 | # | Entry | Status |
 |---|---|---|
@@ -14,8 +16,9 @@ everything was re-run in a Linux container (see
 | 3 | Mock curl is not executable | Fixed in [`cc06e2e`](https://github.com/Bissbert/zbx-cli/commit/cc06e2e) |
 | 4 | API-token errors bypass error handling | Fixed in [`b33ad37`](https://github.com/Bissbert/zbx-cli/commit/b33ad37) |
 | 5 | Doctor duplicates the unavailable HTTP marker | Fixed in [`e0cb555`](https://github.com/Bissbert/zbx-cli/commit/e0cb555) |
-| 6 | `bin/` scripts are committed without the executable bit | Open |
-| 7 | `test_search.sh` loses the mock `curl` in a login shell | Open |
+| 6 | `bin/` scripts are committed without the executable bit | Fixed in [`7679018`](https://github.com/Bissbert/zbx-cli/commit/7679018) |
+| 7 | `test_search.sh` loses the mock `curl` in a login shell | Fixed in [`7679018`](https://github.com/Bissbert/zbx-cli/commit/7679018) |
+| 8 | `zbx login` exits 1 after a successful session login | Fixed in [`7679018`](https://github.com/Bissbert/zbx-cli/commit/7679018) |
 
 The checks below run inside the container that
 [`devtools/linux-run.sh`](../devtools/linux-run.sh) sets up
@@ -24,15 +27,16 @@ The checks below run inside the container that
 
 ```mermaid
 flowchart TD
-    A["make test in a clean clone"] --> B{"bin/zbx executable?"}
-    B -- "no (mode 0644)" --> C["9 test files exit 126<br/>(entry 6)"]
-    B -- "chmod +x" --> D["9 of 12 pass"]
-    D --> E["2 integration tests<br/>need ZABBIX_URL"]
-    D --> F["test_search: bash -lc<br/>resets PATH (entry 7)"]
+    A["make test in a clean clone"] --> B["bin/ committed 100755<br/>(entry 6, fixed)"]
+    B --> C["16 mock test files pass"]
+    B --> D["2 integration tests skipped<br/>without ZABBIX_URL"]
+    C --> E["test_search: bash -c<br/>(entry 7, fixed)"]
+    C --> F["test_session_auth: zbx login<br/>exits 0 (entry 8, fixed)"]
 
-    style C fill:#da3633,stroke:#f85149,color:#fff
-    style D fill:#238636,stroke:#3fb950,color:#fff
-    style F fill:#d29922,stroke:#9e6a03,color:#fff
+    style B fill:#238636,stroke:#3fb950,color:#fff
+    style C fill:#238636,stroke:#3fb950,color:#fff
+    style E fill:#238636,stroke:#3fb950,color:#fff
+    style F fill:#238636,stroke:#3fb950,color:#fff
 ```
 
 ## 1. Internal library appears as a command
@@ -157,14 +161,14 @@ The `000` value now reaches the network branch and gets its message.
 
 ## 6. `bin/` scripts are committed without the executable bit
 
-**Status:** open. Found in the Linux run.
+**Status:** fixed in [`7679018`](https://github.com/Bissbert/zbx-cli/commit/7679018) ([#4](https://github.com/Bissbert/zbx-cli/issues/4)).
 
 **Files:** all 37 files in `bin/` (git mode `100644`); the tests that run
 `"$ROOT/bin/zbx"` directly
 
-**What happens:** `make install` sets mode `0755`, but a fresh clone has
-none of `bin/` executable. The nine mock test files that fail call
-`$ROOT/bin/zbx` directly, which exits 126 (permission denied):
+**What happened:** `make install` sets mode `0755`, but a fresh clone had
+none of `bin/` executable. The nine mock test files that failed call
+`$ROOT/bin/zbx` directly, which exited 126 (permission denied):
 
 ```
 make test (committed modes)
@@ -175,7 +179,7 @@ ASSERT_EQ failed: doctor exit
   got:      126
 ```
 
-The README's workaround for the checkout, `bash bin/zbx ...`, does not avoid
+The README's workaround for the checkout, `bash bin/zbx ...`, did not avoid
 this: the dispatcher runs each subcommand as a separate executable.
 
 ```
@@ -183,24 +187,27 @@ bash bin/zbx config --help exit=126
 bin/zbx: line 286: /tmp/zbx/bin/zbx-config: Permission denied
 ```
 
-After `chmod +x bin/*` the same run gives `9 passed, 3 failed`. The three
-remaining failures are the two integration tests, which exit early without
-`ZABBIX_URL` by design, and entry 7.
+**What changed:** all 37 files in `bin/` are committed with mode `100755`.
+`tests/test_file_modes.sh` checks the git mode of every file in `bin/` and
+`tests/mock-bin/` and runs `bash bin/zbx config --help`. The Linux run now
+shows:
 
-**Possible fix:** commit the files in `bin/` with mode `100755`
-(`git update-index --chmod=+x bin/*`).
+```
+100755 38 files, e.g. bin/log-lib
+bash bin/zbx config --help exit=0
+```
 
 ## 7. `test_search.sh` loses the mock `curl` in a login shell
 
-**Status:** open. Found in the Linux run.
+**Status:** fixed in [`7679018`](https://github.com/Bissbert/zbx-cli/commit/7679018) ([#5](https://github.com/Bissbert/zbx-cli/issues/5)).
 
 **File:** `tests/test_search.sh:15`
 
-**What happens:** the second check runs
+**What happened:** the second check ran
 `bash -lc "printf '{}' | '$ROOT/bin/zbx' call apiinfo.version"`. `-l` makes
 Bash read `/etc/profile`, and Debian's `/etc/profile` sets `PATH` to a fixed
-value. `tests/mock-bin` is dropped, `zbx call` runs the real `curl`, and the
-check fails:
+value. `tests/mock-bin` was dropped, `zbx call` ran the real `curl`, and the
+check failed:
 
 ```
 ASSERT_EQ failed: zbx call exit
@@ -210,4 +217,31 @@ ASSERT_EQ failed: zbx call exit
 /usr/bin/curl
 ```
 
-**Possible fix:** use `bash -c` instead of `bash -lc`.
+**What changed:** the check uses `bash -c`. `tests/test_no_login_shell.sh`
+fails if any test starts a login shell, and checks that a child shell still
+resolves `curl` to `tests/mock-bin/curl`.
+
+## 8. `zbx login` exits 1 after a successful session login
+
+**Status:** fixed in [`7679018`](https://github.com/Bissbert/zbx-cli/commit/7679018) ([#6](https://github.com/Bissbert/zbx-cli/issues/6)). Found by the session-mode test added
+with the fixes for entries 6 and 7.
+
+**File:** `bin/zbx-lib:68` (`log_debug` fallback)
+
+**What happened:** `zbx_login` ends with `log_debug "Session token cached"`.
+The `log_debug` that `zbx-lib` defines was
+`[ "${LOG_LEVEL:-}" = "debug" ] && echo ...`, which returns 1 at any level
+other than `debug`, so `zbx_login` returned 1. `zbx-login` runs
+`zbx_login && echo ok`: with a user and password the session token was cached,
+but `ok` was not printed and the exit status was 1. API-token mode returns
+before that line and was not affected.
+
+**What changed:** the fallback `log_debug` returns 0.
+`tests/test_session_auth.sh` logs in against the mock API, then checks the
+cached token and its mode, token reuse, re-login after expiry and a failed
+login. The Linux run now shows:
+
+```
+exit=0 stdout=[ok]
+cached token: sess-0123
+```

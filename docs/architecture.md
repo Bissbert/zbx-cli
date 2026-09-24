@@ -53,9 +53,8 @@ the client receives a response it accepts.
 
 The installed layout puts the scripts together so that each subcommand can
 source its sibling libraries. `make install` and `make install-user` install
-the files with executable permissions. In the source tree they are committed
-without the executable bit, so run `chmod +x bin/*` before using `bin/zbx`
-directly ([bug 6](BUGS-FOUND.md#6-bin-scripts-are-committed-without-the-executable-bit)).
+the files with executable permissions. They are committed executable too, so
+`bin/zbx` also runs straight from a checkout.
 
 The implementation is Bash plus the existing `curl` and `jq` dependencies.
 There is no build step and no language runtime beyond the shell.

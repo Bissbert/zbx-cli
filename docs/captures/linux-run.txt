@@ -1,0 +1,76 @@
+
+=== environment
+Linux 6.5.11-linuxkit aarch64
+GNU bash, version 5.2.15(1)-release (aarch64-unknown-linux-gnu)
+curl 7.88.1 (aarch64-unknown-linux-gnu) libcurl/7.88.1 OpenSSL/3.0.20 zlib/1.2.13 brotli/1.0.9 zstd/1.5.4 libidn2/2.3.3 libpsl/0.21.2 (+libidn2/2.3.3) libssh2/1.10.0 nghttp2/1.52.0 librtmp/2.3 OpenLDAP/2.5.13
+jq-1.6
+
+=== devtools/measure.sh
+command_files=34
+command_bytes=59770
+command_lines=1755
+bin_bytes=79103
+bin_lines=2351
+test_files=18
+readme_bytes=9401
+readme_lines=205
+
+=== command table matches docs/commands.md
+generated table rows: 36, missing from docs/commands.md: 0
+
+=== file modes as committed
+100755 38 files, e.g. bin/log-lib
+
+=== bash bin/zbx from the clone (committed modes, #4)
+--list lines: 34
+bash bin/zbx config --help exit=0
+
+=== make test
+PASS tests/test_config.sh
+PASS tests/test_dispatcher.sh
+PASS tests/test_doctor.sh
+PASS tests/test_doctor_json.sh
+PASS tests/test_errors.sh
+PASS tests/test_file_modes.sh
+PASS tests/test_global_flags_at_end.sh
+PASS tests/test_help_format.sh
+PASS tests/test_hosts.sh
+SKIP tests/test_integration_connectivity.sh (ZABBIX_URL not set)
+SKIP tests/test_integration_readonly.sh (ZABBIX_URL not set)
+PASS tests/test_no_login_shell.sh
+PASS tests/test_output_format.sh
+PASS tests/test_problems.sh
+PASS tests/test_read_commands.sh
+PASS tests/test_search.sh
+PASS tests/test_session_auth.sh
+PASS tests/test_write_commands.sh
+Summary: 16 passed, 0 failed, 2 skipped
+exit=0
+
+=== tests start no login shells (#5)
+login-shell invocations in tests/: 0
+
+=== zbx login in session mode (#6)
+exit=0 stdout=[ok]
+cached token: sess-0123
+
+=== installed zbx --list
+install exit=0
+list exit=0
+commands listed: 34, lib listed: 0
+
+=== mock curl resolves first
+-rwxr-xr-x tests/mock-bin/curl
+/tmp/zbx/tests/mock-bin/curl
+
+=== JSON-RPC error in API-token mode
+zbx-ping exit=1 stdout=[]
+API error: {"code":-32600,"message":"unsupported API version"}
+zbx-version exit=1 stdout=[api.version: null ]
+API error: {"code":-32600,"message":"unsupported API version"}
+
+=== doctor against a closed port
+exit=0
+ - apiinfo.version [warn] failed (check URL/TLS/auth)
+ - endpoint     [warn] Unable to reach endpoint — check URL and connectivity
+lines containing 000000: 0

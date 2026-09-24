@@ -63,10 +63,10 @@ zbx macro-set web01 '{ENV}' prod
 zbx ack 12345 "Investigating"
 ```
 
-The install and config commands were checked in a temporary local install
-prefix. The commands that contact `zabbix.example.com` require your real
-endpoint and credentials; no live Zabbix endpoint was available for this pass,
-so `doctor`, `ping`, and the data commands were not verified against a server.
+`make install` into a temporary prefix and `zbx --list` were checked in a
+Linux container. The commands that contact `zabbix.example.com` need your real
+endpoint and credentials; `doctor`, `ping`, and the data commands have not been
+run against a server.
 For session authentication, set `ZABBIX_USER` and `ZABBIX_PASS` instead of
 `ZABBIX_API_TOKEN`. See [configuration and authentication](docs/configuration.md)
 
@@ -134,24 +134,29 @@ Config file at `~/.config/zbx/config.sh` (user) or `/etc/zbx/config.sh` (system)
 | `ZABBIX_CA_CERT` | Path to custom CA certificate |
 | `ZABBIX_TOKEN_FILE` | Override session token cache path |
 
-## Measured results
+## Results
 
-These are local repository measurements from
-[`devtools/measure.sh`](devtools/measure.sh), not API benchmarks:
+All results come from [`devtools/linux-run.sh`](devtools/linux-run.sh), run in
+a `python:3.12-slim-bookworm` container on a fresh clone. They are repository
+measurements and mock tests, not API benchmarks:
 
 | Measurement | Result |
 |---|---:|
 | User-facing command source files | 34 |
-| Bytes in those command files | 59,733 |
-| Lines in those command files | 1,754 |
-| Bytes in all `bin/*` files | 79,036 |
-| Shell test files | 12 |
-| Live Zabbix request benchmark | not measured |
+| Bytes in those command files | 59,770 |
+| Lines in those command files | 1,755 |
+| Bytes in all `bin/*` files | 79,103 |
+| Shell test files | 18 |
+| `make test` in a fresh clone | 16 pass, 2 skipped |
 
-The integration tests intentionally require a configured, reachable endpoint.
-No network timing or API-version compatibility number is published without one.
-The measurement method and provenance are documented in
-[`docs/measurement.md`](docs/measurement.md).
+The 16 mock test files use `tests/mock-bin/curl`, which records every request
+so the tests can check the exact API method and parameters of each read and
+write subcommand. They also cover usage and not-found errors, API errors,
+session login and token expiry, and a regression test for each fixed
+[issue](https://github.com/Bissbert/zbx-cli/issues?q=label%3Abug). The two
+integration tests are skipped unless `ZABBIX_URL` is set. Run the suite in a
+Debian container with `sh tests/docker.sh`. See
+[`docs/measurement.md`](docs/measurement.md) for the full output.
 
 ## Repository layout
 
@@ -162,7 +167,7 @@ The measurement method and provenance are documented in
 | `Makefile` | System/user installation, tests, checks, and completions. |
 | `tests/` | Mock-based unit tests and opt-in read-only integration tests. |
 | `tools/` | Repository-maintained completion generation. |
-| `devtools/` | Command-table generation and measurements created for this pass. |
+| `devtools/` | Command-table generation, measurements, and the Linux run. |
 | `docs/` | Architecture, command surface, configuration, failures, and provenance. |
 | `ARCHITECTURE.md` | Existing prose architecture reference. |
 | `OPTIMISATIONS.md` | Existing implementation notes. |
@@ -182,15 +187,14 @@ Start with the [documentation index](docs/README.md).
 - The dispatcher needs a modern Bash for its associative-array and `mapfile`
   features.
 - Commands that need a server cannot be fully verified without a real Zabbix
-  endpoint and credentials or an API token. The integration tests fail early
-  when `ZABBIX_URL` is absent by design.
+  endpoint and credentials or an API token. The integration tests are skipped
+  when `ZABBIX_URL` is absent.
 - Configuration files are sourced as shell code. Keep them private and use the
   redacted `zbx config list`/`get` views when sharing diagnostics.
 - `--insecure` disables TLS verification for the invoked run. Prefer a trusted
   CA or `ZABBIX_CA_CERT`/`ZABBIX_CA_PATH` for normal operation.
-- The tracked source scripts are installed with executable permissions by the
-  Makefile; when using the checkout directly, invoke the dispatcher as `bash
-  bin/zbx ...` unless the files have been made executable locally.
+- Subcommands that take a host or ID read `--format` and `--headers` only
+  before those arguments: `zbx triggers --format json web01`.
 
 ## Status
 

@@ -65,7 +65,7 @@ fi
 log_error(){ echo "[ERROR] $*" >&2; }
 log_warn(){  echo "[WARN ] $*" >&2; }
 log_info(){  echo "[INFO ] $*" >&2; }
-log_debug(){ [ "${LOG_LEVEL:-}" = "debug" ] && echo "[DEBUG] $*" >&2; }
+log_debug(){ [ "${LOG_LEVEL:-}" = "debug" ] && echo "[DEBUG] $*" >&2; return 0; }
 
 # ---- Dependency checks ------------------------------------------------------
 _zbx_require_deps() {

@@ -52,9 +52,10 @@ the client receives a response it accepts.
 ## Dispatch and portability
 
 The installed layout puts the scripts together so that each subcommand can
-source its sibling libraries. The source tree also works through `bash
-bin/zbx ...`; `make install` and `make install-user` install the files with
-executable permissions.
+source its sibling libraries. `make install` and `make install-user` install
+the files with executable permissions. In the source tree they are committed
+without the executable bit, so run `chmod +x bin/*` before using `bin/zbx`
+directly ([bug 6](BUGS-FOUND.md#6-bin-scripts-are-committed-without-the-executable-bit)).
 
 The implementation is Bash plus the existing `curl` and `jq` dependencies.
 There is no build step and no language runtime beyond the shell.

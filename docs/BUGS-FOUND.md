@@ -2,185 +2,212 @@
 
 [← back to the overview](../README.md)
 
-This pass did not change the implementation. The findings below are recorded
-so the documented behavior stays honest and a later code change can be reviewed
-separately.
+Each entry below was reproduced and reviewed. Four were fixed on `main`, and
+one was rejected as a documented requirement. Two more turned up when
+everything was re-run in a Linux container (see
+[measurement and provenance](measurement.md)); they are still open.
+
+| # | Entry | Status |
+|---|---|---|
+| 1 | Internal library appears as a command | Fixed in [`8d62584`](https://github.com/Bissbert/zbx-cli/commit/8d62584) |
+| 2 | Dispatcher requires a modern Bash | Not a bug: documented requirement |
+| 3 | Mock curl is not executable | Fixed in [`cc06e2e`](https://github.com/Bissbert/zbx-cli/commit/cc06e2e) |
+| 4 | API-token errors bypass error handling | Fixed in [`b33ad37`](https://github.com/Bissbert/zbx-cli/commit/b33ad37) |
+| 5 | Doctor duplicates the unavailable HTTP marker | Fixed in [`e0cb555`](https://github.com/Bissbert/zbx-cli/commit/e0cb555) |
+| 6 | `bin/` scripts are committed without the executable bit | Open |
+| 7 | `test_search.sh` loses the mock `curl` in a login shell | Open |
+
+The checks below run inside the container that
+[`devtools/linux-run.sh`](../devtools/linux-run.sh) sets up
+(`python:3.12-slim-bookworm`, GNU bash 5.2.15, curl 7.88.1, jq 1.6), in a
+`git clone` of the repository so the file modes are the committed ones.
 
 ```mermaid
 flowchart TD
-    A["Observed behavior"] --> B{"Implementation bug?"}
-    B -- yes --> C["Record file + line + reproduction"]
-    C --> D["Document current behavior"]
-    D --> E["Propose fix as a diff only"]
-    B -- no --> F["Keep as a documented limitation"]
+    A["make test in a clean clone"] --> B{"bin/zbx executable?"}
+    B -- "no (mode 0644)" --> C["9 test files exit 126<br/>(entry 6)"]
+    B -- "chmod +x" --> D["9 of 12 pass"]
+    D --> E["2 integration tests<br/>need ZABBIX_URL"]
+    D --> F["test_search: bash -lc<br/>resets PATH (entry 7)"]
 
-    style C fill:#d29922,stroke:#9e6a03,color:#fff
-    style D fill:#1f6feb,stroke:#58a6ff,color:#fff
-    style E fill:#8250df,stroke:#bc8cff,color:#fff
+    style C fill:#da3633,stroke:#f85149,color:#fff
+    style D fill:#238636,stroke:#3fb950,color:#fff
+    style F fill:#d29922,stroke:#9e6a03,color:#fff
 ```
 
-## Internal library appears as a command
+## 1. Internal library appears as a command
 
-**Location:** `bin/zbx:15-17`, `_list_subcommands`.
+**Status:** fixed in [`8d62584`](https://github.com/Bissbert/zbx-cli/commit/8d62584).
 
-**What happens:** the dispatcher lists every `zbx-*` executable on `PATH`, so
-an installed `zbx-lib` is shown as the user-facing command `lib`. The library
-is sourced by subcommands and is not intended as a command. The source-derived
-table deliberately excludes it.
+**File:** `bin/zbx` (`_list_subcommands`)
 
-**Reproduction:** install into a temporary prefix, use a modern Bash on `PATH`,
-and run:
+**What happened:** the dispatcher listed every `zbx-*` executable on `PATH`.
+`make install` installs the sourced library `zbx-lib` with mode `0755`, so
+`zbx --list` showed it as the command `lib`.
+
+**What changed:** discovery filters out `zbx-lib`. Other `zbx-*` commands,
+including external extensions, are still listed.
+
+**Check:**
 
 ```sh
-make install PREFIX="$prefix" SYSCONFDIR="$prefix/etc"
-PATH="$prefix/bin:$PATH" zbx --list | grep '^lib$'
+make install PREFIX=/tmp/prefix SYSCONFDIR=/tmp/prefix/etc
+PATH=/tmp/prefix/bin:$PATH zbx --list
 ```
 
-The command prints `lib`.
-
-**Proposed fix:** exclude the internal library during discovery.
-
-```diff
-diff --git a/bin/zbx b/bin/zbx
-@@
-   compgen -c \
-   | grep -E '^zbx-' \
-+  | grep -v '^zbx-lib$' \
-   | sort -u
+```
+commands listed: 34, lib listed: 0
 ```
 
-## Dispatcher requires a modern Bash
+## 2. Dispatcher requires a modern Bash
 
-**Location:** `bin/zbx:56`, the associative `_FALLBACK_DESC` declaration.
+**Status:** not a bug. The entry was reviewed and rejected; nothing was
+changed.
 
-**What happens:** when the shebang resolves to the older system Bash on this
-machine, the associative-array syntax is not supported. The dispatcher exits
-at the declaration with an `unbound variable` error before `--list` can run.
-The README previously named Bash without stating this compatibility boundary.
+**File:** `bin/zbx:56` (associative `_FALLBACK_DESC`), `bin/zbx:146` (`mapfile`)
 
-**Reproduction:** install into a temporary prefix, then deliberately put only
-the system shell directories on `PATH`:
+**What was reported:** under macOS's `/bin/bash` 3.2 the dispatcher stops at
+line 56 with `zbx: unbound variable`.
 
-```sh
-make install PREFIX="$prefix" SYSCONFDIR="$prefix/etc"
-PATH="$prefix/bin:/usr/bin:/bin" "$prefix/bin/zbx" --list
+**Why it was rejected:** the README's known limitations say that `zbx` needs a
+modern Bash, and
+3.2 is outside that requirement. A version check with a clearer message would
+help, but rewriting for Bash 3 is not planned. Current Linux distributions ship Bash 5;
+the Linux run uses 5.2.15.
+
+## 3. Mock curl is not executable
+
+**Status:** fixed in [`cc06e2e`](https://github.com/Bissbert/zbx-cli/commit/cc06e2e).
+
+**Files:** `tests/mock-bin/curl`, `tests/test_doctor.sh`
+
+**What happened:** the mock was committed with mode `0644`, so the tests that
+put `tests/mock-bin` first on `PATH` still ran the real `curl`.
+
+**What changed:** the mock is mode `0755`, and `test_doctor.sh` asserts that
+`command -v curl` resolves to it.
+
+**Check:**
+
+```
+-rwxr-xr-x tests/mock-bin/curl
+/tmp/zbx/tests/mock-bin/curl
 ```
 
-On this machine that exits at `bin/zbx:56` with `zbx: unbound variable`. The
-same installed command works when the newer Bash is first on `PATH`.
+## 4. API-token errors bypass error handling
 
-**Proposed fix:** either state the minimum supported Bash version and check it
-before using associative arrays, or replace the associative array and
-`mapfile` usage with constructs supported by the declared minimum.
+**Status:** fixed in [`b33ad37`](https://github.com/Bissbert/zbx-cli/commit/b33ad37).
 
-```diff
-diff --git a/bin/zbx b/bin/zbx
-@@
- #!/usr/bin/env bash
- set -euo pipefail
- # shellcheck disable=SC1007,SC2015,SC1090,SC1091
-+if (( BASH_VERSINFO[0] < 4 )); then
-+  echo 'zbx requires Bash 4 or newer.' >&2
-+  exit 2
-+fi
-```
+**File:** `bin/zbx-lib` (`zbx_call`)
 
-## Mock curl is not executable in the checkout
+**What happened:** with `ZABBIX_API_TOKEN` set, `zbx_call` returned any valid
+JSON with status 0 before checking `.error`. A JSON-RPC error made `zbx ping`
+print `pong` and exit 0.
 
-**Location:** `tests/mock-bin/curl` (mode `0644`), used by the PATH setup in
-`tests/test_doctor.sh:7-8`, `tests/test_hosts.sh:7-8`, and the other mock tests.
+**What changed:** the session re-login retry only runs in session mode, and a
+structured API error is logged and returns 1 in both modes. Scripts that relied
+on the old exit 0 in token mode now see a failure.
 
-**What happens:** the tests put `tests/mock-bin` first on `PATH`, but the shell
-cannot execute the tracked mock because its mode is not executable. The tests
-fall through to a real `curl`, which makes mock tests depend on the local
-network and can turn a fast test run into endpoint timeouts.
-
-**Reproduction:** from the checkout, run:
-
-```sh
-make test
-```
-
-With no reachable configured endpoint, the mock-oriented tests attempt the
-real endpoint instead of the JSON responses in `tests/mock-bin/curl`.
-
-**Proposed fix:** make only the mock executable.
-
-```diff
-diff --git a/tests/mock-bin/curl b/tests/mock-bin/curl
-old mode 100644
-new mode 100755
-```
-
-## API-token errors bypass structured error handling
-
-**Location:** `bin/zbx-lib:207`, the early return in `zbx_call`.
-
-**What happens:** with `ZABBIX_API_TOKEN` set, any valid JSON response is
-returned with status zero before the later `.error` check. A JSON-RPC error can
-therefore make `zbx ping` print `pong`; `zbx version` prints `api.version:
-null` and an empty user line without a diagnostic.
-
-**Reproduction:** the following shell function stands in for `curl` and returns
-a JSON-RPC error without changing any repository file:
+**Check:** a shell function stands in for `curl` and returns a JSON-RPC error:
 
 ```sh
 curl() { jq -n '{jsonrpc:"2.0",error:{code:-32600,message:"unsupported API version"},id:1}'; }
 export -f curl
-export ZABBIX_API_TOKEN=dummy
-bash bin/zbx-ping
-bash bin/zbx-version
+ZABBIX_URL=http://mock.invalid/api_jsonrpc.php ZABBIX_API_TOKEN=dummy bash bin/zbx-ping
+ZABBIX_URL=http://mock.invalid/api_jsonrpc.php ZABBIX_API_TOKEN=dummy bash bin/zbx-version
 ```
 
-The observed output is `pong` for `zbx-ping`, and `api.version: null` followed
-by an empty `user:` line for `zbx-version`; both commands exit successfully.
-
-**Proposed fix:** inspect the JSON-RPC error before the token-mode success
-return, log it, and return failure to the caller.
-
-```diff
-diff --git a/bin/zbx-lib b/bin/zbx-lib
-@@
--  if [ -n "${ZABBIX_API_TOKEN:-}" ]; then printf '%s' "$resp"; return 0; fi
--  if jq -e '.error.message? | test("Session terminated|Not authorised"; "i")' >/dev/null 2>&1 <<<"$resp"; then
-+  if [ -z "${ZABBIX_API_TOKEN:-}" ] && jq -e '.error.message? | test("Session terminated|Not authorised"; "i")' >/dev/null 2>&1 <<<"$resp"; then
-     log_warn "Session terminated; re-login and retry once"
-     zbx_login
-     resp=$(printf '%s' "$input" | zbx_call_raw "$method")
-   fi
-@@
-   if jq -e '.error? // empty' >/dev/null 2>&1 <<<"$resp"; then
-     log_error "API error: $(jq -c '.error' <<<"$resp")"
-     log_info "Run 'zbx doctor' to diagnose common issues."
-+    return 1
-   fi
+```
+zbx-ping exit=1 stdout=[]
+API error: {"code":-32600,"message":"unsupported API version"}
+zbx-version exit=1 stdout=[api.version: null ]
+API error: {"code":-32600,"message":"unsupported API version"}
 ```
 
-## Doctor duplicates the unavailable HTTP status marker
+`zbx-version` still prints `api.version: null` before it fails, but it now
+logs the error and exits 1.
 
-**Location:** `bin/zbx-doctor:184`, the deep connectivity probe.
+## 5. Doctor duplicates the unavailable HTTP marker
 
-**What happens:** when `curl` fails before producing an HTTP status, the
-`-w '%{http_code}'` path can already emit `000`, and the `|| echo 000` fallback
-adds another copy. The report can therefore say `HTTP 000000 from endpoint`
-instead of the intended unavailable marker.
+**Status:** fixed in [`e0cb555`](https://github.com/Bissbert/zbx-cli/commit/e0cb555).
 
-**Reproduction:** point the doctor at a closed local port:
+**File:** `bin/zbx-doctor` (deep connectivity probe)
+
+**What happened:** when `curl` failed before a response, `-w '%{http_code}'`
+already printed `000` and the `|| echo 000` fallback added a second copy. The
+status became `000000`, which matched none of the `case` branches.
+
+**What changed:** the fallback only sets `000` when the captured value is
+empty.
+
+**Check:**
 
 ```sh
-ZABBIX_URL=http://127.0.0.1:9/api_jsonrpc.php \
-ZABBIX_API_TOKEN=dummy ZABBIX_CURL_TIMEOUT=1 bash bin/zbx-doctor
+ZABBIX_URL=http://127.0.0.1:9/api_jsonrpc.php ZABBIX_API_TOKEN=dummy \
+  ZABBIX_CURL_TIMEOUT=1 bash bin/zbx-doctor
 ```
 
-The endpoint line reports `HTTP 000000 from endpoint` on this machine.
-
-**Proposed fix:** keep the curl write-out value and use the fallback only when
-the command produced no marker.
-
-```diff
-diff --git a/bin/zbx-doctor b/bin/zbx-doctor
-@@
--    http_code=$(_zbx_curl_common -w '%{http_code}' -o "$tmp_resp" -sS -X POST "$ZABBIX_URL" -d "$req" 2>/dev/null || echo 000)
-+    http_code=$(_zbx_curl_common -w '%{http_code}' -o "$tmp_resp" -sS -X POST "$ZABBIX_URL" -d "$req" 2>/dev/null || true)
-+    [ -n "$http_code" ] || http_code=000
 ```
+ - apiinfo.version [warn] failed (check URL/TLS/auth)
+ - endpoint     [warn] Unable to reach endpoint — check URL and connectivity
+lines containing 000000: 0
+```
+
+The `000` value now reaches the network branch and gets its message.
+
+## 6. `bin/` scripts are committed without the executable bit
+
+**Status:** open. Found in the Linux run.
+
+**Files:** all 37 files in `bin/` (git mode `100644`); the tests that run
+`"$ROOT/bin/zbx"` directly
+
+**What happens:** `make install` sets mode `0755`, but a fresh clone has
+none of `bin/` executable. The nine mock test files that fail call
+`$ROOT/bin/zbx` directly, which exits 126 (permission denied):
+
+```
+make test (committed modes)
+Summary: 1 passed, 11 failed
+--- test_doctor.sh stderr
+ASSERT_EQ failed: doctor exit
+  expected: 0
+  got:      126
+```
+
+The README's workaround for the checkout, `bash bin/zbx ...`, does not avoid
+this: the dispatcher runs each subcommand as a separate executable.
+
+```
+bash bin/zbx config --help exit=126
+bin/zbx: line 286: /tmp/zbx/bin/zbx-config: Permission denied
+```
+
+After `chmod +x bin/*` the same run gives `9 passed, 3 failed`. The three
+remaining failures are the two integration tests, which exit early without
+`ZABBIX_URL` by design, and entry 7.
+
+**Possible fix:** commit the files in `bin/` with mode `100755`
+(`git update-index --chmod=+x bin/*`).
+
+## 7. `test_search.sh` loses the mock `curl` in a login shell
+
+**Status:** open. Found in the Linux run.
+
+**File:** `tests/test_search.sh:15`
+
+**What happens:** the second check runs
+`bash -lc "printf '{}' | '$ROOT/bin/zbx' call apiinfo.version"`. `-l` makes
+Bash read `/etc/profile`, and Debian's `/etc/profile` sets `PATH` to a fixed
+value. `tests/mock-bin` is dropped, `zbx call` runs the real `curl`, and the
+check fails:
+
+```
+ASSERT_EQ failed: zbx call exit
+  expected: 0
+  got:      1
+--- curl seen by the login shell that test_search.sh starts
+/usr/bin/curl
+```
+
+**Possible fix:** use `bash -c` instead of `bash -lc`.

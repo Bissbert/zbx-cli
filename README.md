@@ -63,10 +63,10 @@ zbx macro-set web01 '{ENV}' prod
 zbx ack 12345 "Investigating"
 ```
 
-The install and config commands were checked in a temporary local install
-prefix. The commands that contact `zabbix.example.com` require your real
-endpoint and credentials; no live Zabbix endpoint was available for this pass,
-so `doctor`, `ping`, and the data commands were not verified against a server.
+`make install` into a temporary prefix and `zbx --list` were checked in a
+Linux container. The commands that contact `zabbix.example.com` need your real
+endpoint and credentials; `doctor`, `ping`, and the data commands have not been
+run against a server.
 For session authentication, set `ZABBIX_USER` and `ZABBIX_PASS` instead of
 `ZABBIX_API_TOKEN`. See [configuration and authentication](docs/configuration.md)
 
@@ -134,24 +134,29 @@ Config file at `~/.config/zbx/config.sh` (user) or `/etc/zbx/config.sh` (system)
 | `ZABBIX_CA_CERT` | Path to custom CA certificate |
 | `ZABBIX_TOKEN_FILE` | Override session token cache path |
 
-## Measured results
+## Results
 
-These are local repository measurements from
-[`devtools/measure.sh`](devtools/measure.sh), not API benchmarks:
+All results come from [`devtools/linux-run.sh`](devtools/linux-run.sh), run in
+a `python:3.12-slim-bookworm` container on a fresh clone. They are repository
+measurements and mock tests, not API benchmarks:
 
 | Measurement | Result |
 |---|---:|
 | User-facing command source files | 34 |
-| Bytes in those command files | 59,733 |
-| Lines in those command files | 1,754 |
-| Bytes in all `bin/*` files | 79,036 |
+| Bytes in those command files | 59,770 |
+| Lines in those command files | 1,755 |
+| Bytes in all `bin/*` files | 79,093 |
 | Shell test files | 12 |
-| Live Zabbix request benchmark | not measured |
+| `make test` in a fresh clone | 1 of 12 pass |
+| `make test` after `chmod +x bin/*` | 9 of 12 pass |
 
-The integration tests intentionally require a configured, reachable endpoint.
-No network timing or API-version compatibility number is published without one.
-The measurement method and provenance are documented in
-[`docs/measurement.md`](docs/measurement.md).
+In a fresh clone the files in `bin/` are not executable, so most mock tests
+fail with exit 126 ([bug 6](docs/BUGS-FOUND.md#6-bin-scripts-are-committed-without-the-executable-bit)).
+With the bits set, the two integration tests stop because no `ZABBIX_URL` is
+set, and `test_search.sh` fails because its login shell resets `PATH`
+([bug 7](docs/BUGS-FOUND.md#7-test_searchsh-loses-the-mock-curl-in-a-login-shell)).
+The four fixed bugs are re-checked in the same run. See
+[`docs/measurement.md`](docs/measurement.md) for the full output.
 
 ## Repository layout
 
@@ -162,7 +167,7 @@ The measurement method and provenance are documented in
 | `Makefile` | System/user installation, tests, checks, and completions. |
 | `tests/` | Mock-based unit tests and opt-in read-only integration tests. |
 | `tools/` | Repository-maintained completion generation. |
-| `devtools/` | Command-table generation and measurements created for this pass. |
+| `devtools/` | Command-table generation, measurements, and the Linux run. |
 | `docs/` | Architecture, command surface, configuration, failures, and provenance. |
 | `ARCHITECTURE.md` | Existing prose architecture reference. |
 | `OPTIMISATIONS.md` | Existing implementation notes. |
@@ -188,9 +193,10 @@ Start with the [documentation index](docs/README.md).
   redacted `zbx config list`/`get` views when sharing diagnostics.
 - `--insecure` disables TLS verification for the invoked run. Prefer a trusted
   CA or `ZABBIX_CA_CERT`/`ZABBIX_CA_PATH` for normal operation.
-- The tracked source scripts are installed with executable permissions by the
-  Makefile; when using the checkout directly, invoke the dispatcher as `bash
-  bin/zbx ...` unless the files have been made executable locally.
+- The files in `bin/` are committed without the executable bit. `make install`
+  sets it; to use the checkout directly, run `chmod +x bin/*` first.
+  `bash bin/zbx ...` alone is not enough, because the dispatcher runs each
+  subcommand as its own executable ([bug 6](docs/BUGS-FOUND.md#6-bin-scripts-are-committed-without-the-executable-bit)).
 
 ## Status
 

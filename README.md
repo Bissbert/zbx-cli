@@ -152,10 +152,10 @@ measurements and mock tests, not API benchmarks:
 The 16 mock test files use `tests/mock-bin/curl`, which records every request
 so the tests can check the exact API method and parameters of each read and
 write subcommand. They also cover usage and not-found errors, API errors,
-session login and token expiry, and a regression test for each fixed bug. The
-two integration tests are skipped unless `ZABBIX_URL` is set. Run the suite in
-a Debian container with `sh tests/docker.sh`. The fixed bugs are re-checked in
-the same run. See
+session login and token expiry, and a regression test for each fixed
+[issue](https://github.com/Bissbert/zbx-cli/issues?q=label%3Abug). The two
+integration tests are skipped unless `ZABBIX_URL` is set. Run the suite in a
+Debian container with `sh tests/docker.sh`. See
 [`docs/measurement.md`](docs/measurement.md) for the full output.
 
 ## Repository layout

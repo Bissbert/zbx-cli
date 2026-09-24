@@ -21,10 +21,10 @@ flowchart LR
     A["git clone<br/>(committed modes)"] --> B["devtools/measure.sh"]
     A --> C["generate-command-table.sh"]
     A --> D["make test"]
-    A --> E["bug checks"]
+    A --> E["behaviour checks"]
     B --> F["README results"]
     C --> G["docs/commands.md"]
-    D --> H["BUGS-FOUND.md"]
+    D --> H["measurement.md"]
     E --> H
 
     style A fill:#1f6feb,stroke:#58a6ff,color:#fff
@@ -85,19 +85,19 @@ ZABBIX_URL=https://zabbix.example.com/api_jsonrpc.php \
 
 The integration suite is read-only.
 
-## Fixed bugs
+## Behaviour checks
 
-The script also checks each fixed entry in [bugs found](BUGS-FOUND.md):
+The script also checks behaviour that earlier versions got wrong:
 
-| Entry | Result |
+| Check | Result |
 |---|---|
-| 1. Internal library listed | `commands listed: 34, lib listed: 0` after `make install` |
-| 3. Mock curl | `-rwxr-xr-x`, and `command -v curl` resolves to `tests/mock-bin/curl` |
-| 4. Token-mode API error | `zbx-ping` and `zbx-version` exit 1 and log `API error: ...` |
-| 5. `000000` marker | doctor against `127.0.0.1:9` prints the network message; no `000000` |
-| 6. Executable bit | 38 files at `100755`; `bash bin/zbx config --help` exits 0 |
-| 7. Login shell | no login-shell invocations in `tests/` |
-| 8. Session login | `zbx login` exits 0, prints `ok`, caches `sess-0123` |
+| Installed `zbx --list` | `commands listed: 34, lib listed: 0` after `make install` |
+| Mock curl | `-rwxr-xr-x`, and `command -v curl` resolves to `tests/mock-bin/curl` |
+| Token-mode API error | `zbx-ping` and `zbx-version` exit 1 and log `API error: ...` |
+| Doctor against a closed port | prints the network message; no `000000` |
+| Executable bit ([#4](https://github.com/Bissbert/zbx-cli/issues/4)) | 38 files at `100755`; `bash bin/zbx config --help` exits 0 |
+| No login shells in tests ([#5](https://github.com/Bissbert/zbx-cli/issues/5)) | no login-shell invocations in `tests/` |
+| Session login ([#6](https://github.com/Bissbert/zbx-cli/issues/6)) | `zbx login` exits 0, prints `ok`, caches `sess-0123` |
 
 ## Not covered
 

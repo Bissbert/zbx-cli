@@ -2,18 +2,48 @@
 # Minimal curl mock for tests: ignores most flags, reads -d payload, prints JSON.
 set -euo pipefail
 
-PAYLOAD=""
+#
+# Test controls:
+#   MOCK_CURL_LOG=<file>     append each request as one JSON line, with the
+#                            Authorization header under "_authorization"
+#   MOCK_API_ERROR=<method>  answer that method with a JSON-RPC error
+# Hosts named "missing" and groups named "New group" are not found.
+
+PAYLOAD="" AUTHZ=""
 while [ $# -gt 0 ]; do
   case "$1" in
     -d)
       PAYLOAD="$2"; shift 2 ;;
+    -H)
+      case "$2" in Authorization:*) AUTHZ="${2#Authorization: }" ;; esac
+      shift 2 ;;
     *)
       shift ;;
   esac
 done
 
+if [ -n "${MOCK_CURL_LOG:-}" ]; then
+  jq -c --arg a "$AUTHZ" '. + {_authorization:$a}' <<<"$PAYLOAD" >>"$MOCK_CURL_LOG"
+fi
+
 method=$(jq -r '.method // empty' <<<"$PAYLOAD" 2>/dev/null || true)
+if [ -n "${MOCK_API_ERROR:-}" ] && [ "$method" = "$MOCK_API_ERROR" ]; then
+  jq -n '{jsonrpc:"2.0", error:{code:-32602, message:"Invalid params.", data:"mock error"}, id:1}'
+  exit 0
+fi
+# Like Zabbix, refuse calls that carry neither a bearer token nor a session.
 case "$method" in
+  apiinfo.version|user.login) ;;
+  *)
+    if [ -z "$AUTHZ" ] && [ -z "$(jq -r '.auth // empty' <<<"$PAYLOAD")" ]; then
+      jq -n '{jsonrpc:"2.0", error:{code:-32602, message:"Invalid params.", data:"Not authorised."}, id:1}'
+      exit 0
+    fi ;;
+esac
+
+case "$method" in
+  user.login)
+    jq -n '{jsonrpc:"2.0", result:"sess-0123", id:1}' ;;
   apiinfo.version)
     jq -n '{jsonrpc:"2.0", result:"7.0.0", id:1}' ;;
   user.get)
@@ -21,13 +51,23 @@ case "$method" in
   host.get)
     # If filter.host provided, return one; else two
     host=$(jq -r '.params.filter.host // empty' <<<"$PAYLOAD" 2>/dev/null || true)
-    if [ -n "$host" ]; then
+    if [ "$host" = "missing" ]; then
+      jq -n '{jsonrpc:"2.0", result:[], id:1}'
+    elif [ -n "$host" ]; then
       jq -n --arg h "$host" '{jsonrpc:"2.0", result:[{hostid:"10101", host:$h, name:$h}], id:1}'
     else
       jq -n '{jsonrpc:"2.0", result:[{hostid:"10101", host:"web01", name:"Web 01"},{hostid:"10102", host:"db01", name:"DB 01"}], id:1}'
     fi ;;
   hostgroup.get)
-    jq -n '{jsonrpc:"2.0", result:[{groupid:"2001", name:"Linux servers"}], id:1}' ;;
+    if [ "$(jq -r '.params.filter.name // empty' <<<"$PAYLOAD")" = "New group" ]; then
+      jq -n '{jsonrpc:"2.0", result:[], id:1}'
+    else
+      jq -n '{jsonrpc:"2.0", result:[{groupid:"2001", name:"Linux servers"}], id:1}'
+    fi ;;
+  hostgroup.create)
+    jq -n '{jsonrpc:"2.0", result:{groupids:["2002"]}, id:1}' ;;
+  host.create)
+    jq -n '{jsonrpc:"2.0", result:{hostids:["10103"]}, id:1}' ;;
   template.get)
     name=$(jq -r '.params.filter.name // empty' <<<"$PAYLOAD" 2>/dev/null || true)
     if [ -n "$name" ]; then
@@ -42,7 +82,22 @@ case "$method" in
   problem.get)
     jq -n '{jsonrpc:"2.0", result:[{"eventid":"6001","name":"CPU high on web01","severity":4,"clock":1700000000}], id:1}' ;;
   usermacro.get)
-    jq -n '{jsonrpc:"2.0", result:[{"macro":"{ENV}","value":"prod"}], id:1}' ;;
+    macro=$(jq -r '.params.filter.macro // empty' <<<"$PAYLOAD" 2>/dev/null || true)
+    if [ -n "$macro" ] && [ "$macro" != "{ENV}" ]; then
+      jq -n '{jsonrpc:"2.0", result:[], id:1}'
+    else
+      jq -n '{jsonrpc:"2.0", result:[{"hostmacroid":"8001","macro":"{ENV}","value":"prod"}], id:1}'
+    fi ;;
+  usermacro.delete)
+    jq -n '{jsonrpc:"2.0", result:{hostmacroids:["8001"]}, id:1}' ;;
+  trigger.update)
+    jq -n '{jsonrpc:"2.0", result:{triggerids:["5001"]}, id:1}' ;;
+  maintenance.delete)
+    jq -n '{jsonrpc:"2.0", result:{maintenanceids:["7001"]}, id:1}' ;;
+  history.get)
+    jq -n '{jsonrpc:"2.0", result:[{"clock":"1700000000","value":"3"},{"clock":"1700000060","value":"4"}], id:1}' ;;
+  trend.get)
+    jq -n '{jsonrpc:"2.0", result:[{"clock":"1699999200","num":"60","min":"1","avg":"3.5","max":"7"}], id:1}' ;;
   event.acknowledge)
     jq -n '{jsonrpc:"2.0", result:{eventids:["6001"]}, id:1}' ;;
   host.update)
@@ -53,8 +108,6 @@ case "$method" in
     jq -n '{jsonrpc:"2.0", result:[{"maintenanceid":"7001","name":"Window","active_since":1700000000,"active_till":1700003600}], id:1}' ;;
   maintenance.create)
     jq -n '{jsonrpc:"2.0", result:{maintenanceids:["7001"]}, id:1}' ;;
-  template.massAdd|host.update)
-    jq -n '{jsonrpc:"2.0", result:{hostids:["10101"]}, id:1}' ;;
   *)
     # Default empty result
     jq -n '{jsonrpc:"2.0", result:[], id:1}' ;;

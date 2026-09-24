@@ -9,58 +9,50 @@ jq-1.6
 command_files=34
 command_bytes=59770
 command_lines=1755
-bin_bytes=79093
+bin_bytes=79103
 bin_lines=2351
-test_files=12
-readme_bytes=9158
-readme_lines=201
+test_files=18
+readme_bytes=9386
+readme_lines=205
 
 === command table matches docs/commands.md
 generated table rows: 36, missing from docs/commands.md: 0
 
 === file modes as committed
-100644 37 files, e.g. bin/log-lib
-100755 1 files, e.g. tests/mock-bin/curl
+100755 38 files, e.g. bin/log-lib
 
-=== bash bin/zbx from the clone (committed modes)
---list lines: 0
-bash bin/zbx config --help exit=126
-bin/zbx: line 286: /tmp/zbx/bin/zbx-config: Permission denied
+=== bug 6: bash bin/zbx from the clone (committed modes)
+--list lines: 34
+bash bin/zbx config --help exit=0
 
-=== make test (committed modes)
-FAIL tests/test_config.sh (exit 1)
-FAIL tests/test_dispatcher.sh (exit 1)
-FAIL tests/test_doctor.sh (exit 1)
-FAIL tests/test_doctor_json.sh (exit 1)
-FAIL tests/test_global_flags_at_end.sh (exit 1)
+=== make test
+PASS tests/test_config.sh
+PASS tests/test_dispatcher.sh
+PASS tests/test_doctor.sh
+PASS tests/test_doctor_json.sh
+PASS tests/test_errors.sh
+PASS tests/test_file_modes.sh
+PASS tests/test_global_flags_at_end.sh
 PASS tests/test_help_format.sh
-FAIL tests/test_hosts.sh (exit 1)
-FAIL tests/test_integration_connectivity.sh (exit 1)
-FAIL tests/test_integration_readonly.sh (exit 1)
-FAIL tests/test_output_format.sh (exit 1)
-FAIL tests/test_problems.sh (exit 1)
-FAIL tests/test_search.sh (exit 1)
-Summary: 1 passed, 11 failed
-exit=2
---- test_doctor.sh stderr
-ASSERT_EQ failed: doctor exit
-  expected: 0
-  got:      126
+PASS tests/test_hosts.sh
+SKIP tests/test_integration_connectivity.sh (ZABBIX_URL not set)
+SKIP tests/test_integration_readonly.sh (ZABBIX_URL not set)
+PASS tests/test_no_login_shell.sh
+PASS tests/test_output_format.sh
+PASS tests/test_problems.sh
+PASS tests/test_read_commands.sh
+PASS tests/test_search.sh
+PASS tests/test_session_auth.sh
+PASS tests/test_write_commands.sh
+Summary: 16 passed, 0 failed, 2 skipped
+exit=0
 
-=== make test with bin/ made executable
-FAIL tests/test_integration_connectivity.sh (exit 1)
-FAIL tests/test_integration_readonly.sh (exit 1)
-FAIL tests/test_search.sh (exit 1)
-Summary: 9 passed, 3 failed
-exit=2
---- integration tests without ZABBIX_URL
-ERROR: ZABBIX_URL must be set for integration connectivity tests
---- test_search.sh
-ASSERT_EQ failed: zbx call exit
-  expected: 0
-  got:      1
---- curl seen by the login shell that test_search.sh starts
-/usr/bin/curl
+=== bug 7: tests start no login shells
+login-shell invocations in tests/: 0
+
+=== bug 8: zbx login in session mode
+exit=0 stdout=[ok]
+cached token: sess-0123
 
 === bug 1: installed zbx --list
 install exit=0

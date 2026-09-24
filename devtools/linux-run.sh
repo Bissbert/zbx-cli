@@ -45,41 +45,36 @@ echo "generated table rows: $(wc -l < /tmp/rows.md), missing from docs/commands.
 section "file modes as committed"
 git ls-files -s bin tests/mock-bin | awk "{print \$1, \$4}" | sort | uniq -c -w6 | awk "{print \$2, \$1 \" files, e.g.\", \$3}"
 
-section "bash bin/zbx from the clone (committed modes)"
+section "bash bin/zbx from the clone (committed modes, #4)"
 echo "--list lines: $(bash bin/zbx --list | wc -l)"
 bash bin/zbx config --help >/dev/null 2>/tmp/e.txt; echo "bash bin/zbx config --help exit=$?"
 cat /tmp/e.txt
 
-section "make test (committed modes)"
+section "make test"
 make test > /tmp/test.log 2>&1; rc=$?
-grep -E "^(PASS|FAIL|Summary)" /tmp/test.log
+grep -E "^(PASS|FAIL|SKIP|Summary)" /tmp/test.log
 echo "exit=$rc"
-echo "--- test_doctor.sh stderr"
-bash tests/test_doctor.sh 2>&1 | tail -3
 
-section "make test with bin/ made executable"
-chmod +x bin/*
-make test > /tmp/test2.log 2>&1; rc=$?
-grep -E "^(FAIL|Summary)" /tmp/test2.log
-echo "exit=$rc"
-echo "--- integration tests without ZABBIX_URL"
-bash tests/test_integration_connectivity.sh 2>&1 | tail -1
-echo "--- test_search.sh"
-bash tests/test_search.sh 2>&1 | tail -3
-echo "--- curl seen by the login shell that test_search.sh starts"
-PATH=$PWD/tests/mock-bin:$PATH bash -lc "command -v curl"
-git checkout -q -- bin
+section "tests start no login shells (#5)"
+echo "login-shell invocations in tests/: $(grep -cE "\b(bash|sh|zsh) +-[a-zA-Z]*l" tests/test_search.sh tests/run.sh tests/helpers.sh | awk -F: "{s+=\$2} END {print s}")"
 
-section "bug 1: installed zbx --list"
+section "zbx login in session mode (#6)"
+export HOME=/tmp/h8 XDG_STATE_HOME=/tmp/h8/state ZABBIX_USER=alice ZABBIX_PASS=secret
+PATH=$PWD/tests/mock-bin:$PATH bash bin/zbx login > /tmp/l.txt 2>/dev/null; echo "exit=$? stdout=[$(cat /tmp/l.txt)]"
+echo "cached token: $(jq -r .token /tmp/h8/state/zbx/session.token)"
+unset HOME XDG_STATE_HOME ZABBIX_USER ZABBIX_PASS
+export HOME=/root
+
+section "installed zbx --list"
 make install PREFIX=/tmp/prefix SYSCONFDIR=/tmp/prefix/etc >/dev/null 2>&1; echo "install exit=$?"
 PATH=/tmp/prefix/bin:$PATH zbx --list > /tmp/list.txt; echo "list exit=$?"
 echo "commands listed: $(wc -l < /tmp/list.txt), lib listed: $(grep -cx lib /tmp/list.txt)"
 
-section "bug 3: mock curl resolves first"
+section "mock curl resolves first"
 stat -c "%A %n" tests/mock-bin/curl
 PATH=$PWD/tests/mock-bin:$PATH command -v curl
 
-section "bug 4: JSON-RPC error in API-token mode"
+section "JSON-RPC error in API-token mode"
 curl() { jq -n "{jsonrpc:\"2.0\",error:{code:-32600,message:\"unsupported API version\"},id:1}"; }
 export -f curl
 for c in ping version; do
@@ -90,7 +85,7 @@ for c in ping version; do
 done
 unset -f curl
 
-section "bug 5: doctor against a closed port"
+section "doctor against a closed port"
 ZABBIX_URL=http://127.0.0.1:9/api_jsonrpc.php ZABBIX_API_TOKEN=dummy ZABBIX_CURL_TIMEOUT=1 \
   bash bin/zbx-doctor > /tmp/doc.txt 2>&1; echo "exit=$?"
 grep -E "apiinfo|endpoint" /tmp/doc.txt

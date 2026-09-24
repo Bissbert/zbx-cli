@@ -145,17 +145,17 @@ measurements and mock tests, not API benchmarks:
 | User-facing command source files | 34 |
 | Bytes in those command files | 59,770 |
 | Lines in those command files | 1,755 |
-| Bytes in all `bin/*` files | 79,093 |
-| Shell test files | 12 |
-| `make test` in a fresh clone | 1 of 12 pass |
-| `make test` after `chmod +x bin/*` | 9 of 12 pass |
+| Bytes in all `bin/*` files | 79,103 |
+| Shell test files | 18 |
+| `make test` in a fresh clone | 16 pass, 2 skipped |
 
-In a fresh clone the files in `bin/` are not executable, so most mock tests
-fail with exit 126 ([bug 6](docs/BUGS-FOUND.md#6-bin-scripts-are-committed-without-the-executable-bit)).
-With the bits set, the two integration tests stop because no `ZABBIX_URL` is
-set, and `test_search.sh` fails because its login shell resets `PATH`
-([bug 7](docs/BUGS-FOUND.md#7-test_searchsh-loses-the-mock-curl-in-a-login-shell)).
-The four fixed bugs are re-checked in the same run. See
+The 16 mock test files use `tests/mock-bin/curl`, which records every request
+so the tests can check the exact API method and parameters of each read and
+write subcommand. They also cover usage and not-found errors, API errors,
+session login and token expiry, and a regression test for each fixed
+[issue](https://github.com/Bissbert/zbx-cli/issues?q=label%3Abug). The two
+integration tests are skipped unless `ZABBIX_URL` is set. Run the suite in a
+Debian container with `sh tests/docker.sh`. See
 [`docs/measurement.md`](docs/measurement.md) for the full output.
 
 ## Repository layout
@@ -187,16 +187,14 @@ Start with the [documentation index](docs/README.md).
 - The dispatcher needs a modern Bash for its associative-array and `mapfile`
   features.
 - Commands that need a server cannot be fully verified without a real Zabbix
-  endpoint and credentials or an API token. The integration tests fail early
-  when `ZABBIX_URL` is absent by design.
+  endpoint and credentials or an API token. The integration tests are skipped
+  when `ZABBIX_URL` is absent.
 - Configuration files are sourced as shell code. Keep them private and use the
   redacted `zbx config list`/`get` views when sharing diagnostics.
 - `--insecure` disables TLS verification for the invoked run. Prefer a trusted
   CA or `ZABBIX_CA_CERT`/`ZABBIX_CA_PATH` for normal operation.
-- The files in `bin/` are committed without the executable bit. `make install`
-  sets it; to use the checkout directly, run `chmod +x bin/*` first.
-  `bash bin/zbx ...` alone is not enough, because the dispatcher runs each
-  subcommand as its own executable ([bug 6](docs/BUGS-FOUND.md#6-bin-scripts-are-committed-without-the-executable-bit)).
+- Subcommands that take a host or ID read `--format` and `--headers` only
+  before those arguments: `zbx triggers --format json web01`.
 
 ## Status
 

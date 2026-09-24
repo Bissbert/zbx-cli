@@ -21,10 +21,10 @@ flowchart LR
     A["git clone<br/>(committed modes)"] --> B["devtools/measure.sh"]
     A --> C["generate-command-table.sh"]
     A --> D["make test"]
-    A --> E["bug checks"]
+    A --> E["behaviour checks"]
     B --> F["README results"]
     C --> G["docs/commands.md"]
-    D --> H["BUGS-FOUND.md"]
+    D --> H["measurement.md"]
     E --> H
 
     style A fill:#1f6feb,stroke:#58a6ff,color:#fff
@@ -51,9 +51,9 @@ flowchart LR
 | User-facing command source files | 34 |
 | Bytes in those command files | 59,770 |
 | Lines in those command files | 1,755 |
-| Bytes in all `bin/*` files | 79,093 |
+| Bytes in all `bin/*` files | 79,103 |
 | Lines in all `bin/*` files | 2,351 |
-| Shell test files | 12 |
+| Shell test files | 18 |
 
 ## Command table
 
@@ -66,29 +66,15 @@ sourced `zbx-lib`, and extracts the first `Usage:` line and description. All
 `make test` runs every `tests/test_*.sh`. In a fresh clone:
 
 ```
-Summary: 1 passed, 11 failed
+Summary: 16 passed, 0 failed, 2 skipped
 ```
 
-Nine mock tests exit 126 because the files in `bin/` are committed without
-the executable bit (entry 6 in [bugs found](BUGS-FOUND.md)). After
-`chmod +x bin/*`:
-
-```
-FAIL tests/test_integration_connectivity.sh (exit 1)
-FAIL tests/test_integration_readonly.sh (exit 1)
-FAIL tests/test_search.sh (exit 1)
-Summary: 9 passed, 3 failed
-```
-
-The two integration tests need `ZABBIX_URL` and a reachable endpoint and stop
-early without one, by design:
-
-```
-ERROR: ZABBIX_URL must be set for integration connectivity tests
-```
-
-`test_search.sh` fails because it starts a login shell that resets `PATH`
-(entry 7).
+The two integration tests need `ZABBIX_URL` and a reachable endpoint, and
+`tests/run.sh` skips them when it is not set. The mock tests put
+`tests/mock-bin` first on `PATH`; its `curl` answers from fixed JSON, refuses
+calls without a token or session as Zabbix does, can return an error for one
+method (`MOCK_API_ERROR`), and logs each request (`MOCK_CURL_LOG`) so the
+tests can check the parameters sent.
 
 To run the integration tests against a server:
 
@@ -99,16 +85,19 @@ ZABBIX_URL=https://zabbix.example.com/api_jsonrpc.php \
 
 The integration suite is read-only.
 
-## Fixed bugs
+## Behaviour checks
 
-The script also checks each fixed entry in [bugs found](BUGS-FOUND.md):
+The script also checks behaviour that earlier versions got wrong:
 
-| Entry | Result |
+| Check | Result |
 |---|---|
-| 1. Internal library listed | `commands listed: 34, lib listed: 0` after `make install` |
-| 3. Mock curl | `-rwxr-xr-x`, and `command -v curl` resolves to `tests/mock-bin/curl` |
-| 4. Token-mode API error | `zbx-ping` and `zbx-version` exit 1 and log `API error: ...` |
-| 5. `000000` marker | doctor against `127.0.0.1:9` prints the network message; no `000000` |
+| Installed `zbx --list` | `commands listed: 34, lib listed: 0` after `make install` |
+| Mock curl | `-rwxr-xr-x`, and `command -v curl` resolves to `tests/mock-bin/curl` |
+| Token-mode API error | `zbx-ping` and `zbx-version` exit 1 and log `API error: ...` |
+| Doctor against a closed port | prints the network message; no `000000` |
+| Executable bit ([#4](https://github.com/Bissbert/zbx-cli/issues/4)) | 38 files at `100755`; `bash bin/zbx config --help` exits 0 |
+| No login shells in tests ([#5](https://github.com/Bissbert/zbx-cli/issues/5)) | no login-shell invocations in `tests/` |
+| Session login ([#6](https://github.com/Bissbert/zbx-cli/issues/6)) | `zbx login` exits 0, prints `ok`, caches `sess-0123` |
 
 ## Not covered
 
